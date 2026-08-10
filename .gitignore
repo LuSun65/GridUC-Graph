@@ -1,0 +1,35 @@
+# Data and generated outputs
+data/
+log/
+report/
+
+# Model/checkpoint and serialized data artifacts
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.npz
+*.npy
+*.mat
+*.csv
+*.tsv
+*.jsonl
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# OS and archive metadata
+.DS_Store
+__MACOSX/
+
+# Editor and temporary files
+*.swp
+*.swo
+*~
