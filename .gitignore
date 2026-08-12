@@ -33,3 +33,6 @@ __MACOSX/
 *.swp
 *.swo
 *~
+
+# Local Codex skills
+skills/
