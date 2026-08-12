@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Model Versions"
+  short_description: "Safely isolate model code, artifacts, and comparisons"
+  default_prompt: "Use $manage-model-versions to prepare and execute a safely isolated model version change."
