@@ -7,7 +7,7 @@
 - 当前实现作为 V1 基线保持不变，并且能够随时复现。
 - 后续开发全部在 V2 分支和独立工作目录中进行。
 - V2 可以复用行为完全一致的现有 layer 和 block；需要改变内部逻辑时，应新增 V2 实现，避免改变 V1 行为。
-- V1 与 V2 的 processed data、checkpoint、result 和 log 互不覆盖。
+- V1 与 V2 可以只读共享兼容的 processed data；新生成的 processed cache、checkpoint、result 和 log 不得覆盖已有内容。
 - V1 与 V2 可以使用相同的数据划分和测试场景进行公平比较。
 - 每项网络改动都能单独评估，避免无法区分收益来自架构、特征还是训练配置。
 
@@ -24,7 +24,8 @@ Git 基线
 
 数据与产物
   ├── case、原始 samples：按条件共享
-  └── processed、checkpoint、result、log：按实验隔离
+  ├── processed：按数据和处理指纹只读共享
+  └── checkpoint、result、log：按实验隔离
 
 实验
   ├── 固定测试集
@@ -142,14 +143,15 @@ MODEL_CLASSES = {
 
 ### 5.1 输入与输出使用不同根目录
 
-V2 分支的新实验框架应引入两个独立概念：
+V2 分支的新实验框架应区分三个概念：
 
 - `input_root`：case 文件和可共享的原始 samples。
-- `artifact_root`：当前实验的 processed data、checkpoint、result 和 log。
+- `processed_root`：按数据和处理版本寻址、可被多个实验只读共享的 processed tensors；也可以直接引用经过验证的 V1 legacy processed 文件。
+- `artifact_root`：当前实验的 checkpoint、result 和 log。
 
-`artifact_root` 只在 V2 分支实现，不要求修改 `main`。新实验框架同时注册并运行 V1 兼容架构和 V2 架构，两者的输出通过不同 `run_id` 写入 V2 worktree 的实验目录。这里的 V1 指 V1 模型架构，而不是在冻结的 `main` worktree 中运行新的实验基础设施。
+`processed_root` 和 `artifact_root` 只在 V2 分支的新实验框架中使用，不要求修改 `main`。新实验框架同时注册并运行 V1 兼容架构和 V2 架构，两者可以读取同一份兼容的 processed tensors，训练及测试输出则通过不同 `run_id` 写入 V2 worktree 的实验目录。这里的 V1 指 V1 模型架构，而不是在冻结的 `main` worktree 中运行新的实验基础设施。
 
-V2 worktree 可以从 V1 目录只读访问已有的大体积输入和 legacy 产物，但所有新输出必须写入 V2 的 `artifact_root`。`main` worktree 及其现有 `data/<case>/model`、`data/<case>/result` 和 `log/` 保持只读。不要把整个 V1 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 产物的风险。
+V2 worktree 可以从 V1 目录只读访问已有的大体积输入和经过验证的 legacy processed data。新生成的 processed tensors 写入独立的 `processed_root`，其他新输出写入 V2 的 `artifact_root`。`main` worktree 及其现有 `data/<case>/processed`、`data/<case>/model`、`data/<case>/result` 和 `log/` 保持只读。不要把整个 V1 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 数据和产物的风险。
 
 ### 5.2 实验目录
 
@@ -161,14 +163,17 @@ Git branch 和 worktree 已经标识源码基线，具体架构则由运行配�
 V1 兼容架构和 V2 架构使用相同的 `comparison_id`，由 V2 实验框架写入同一个 `artifact_root`，再以不同 `run_id` 隔离。冻结的 V1 worktree 不需要实现或维护这套目录。
 
 ```text
+processed_cache/
+└── <dataset_id>/
+    └── <process_fingerprint>/
+        └── <case>/<uc>.pt
+
 artifacts/
 └── comparisons/
     └── <comparison_id>/
         └── runs/
             └── <run_id>/
                 ├── manifest.json
-                ├── processed/
-                │   └── <case>/<uc>.pt
                 ├── checkpoints/
                 │   └── <case>/<uc>/<model>.pt
                 ├── results/
@@ -200,11 +205,76 @@ V2 artifact_root（运行 V2 架构）:
 | -------------------- | -------: | ---------------------------------------- |
 | `data/case/*.xlsx` |       是 | 原始问题定义，不应由模型实验修改         |
 | raw samples          | 通常可以 | 仅当采样逻辑、标签定义和所需字段未变化   |
-| processed tensors    |   视情况 | 节点特征或输入 schema 变化时必须重新生成 |
+| processed tensors    | 条件共享 | 数据与处理指纹一致时只读共享，否则重新生成 |
 | checkpoint           |       否 | 与模型架构、配置和训练过程绑定           |
 | result               |       否 | 与模型、测试集和求解参数绑定             |
 | log                  |       否 | 现有日志存在覆盖行为                     |
 | 固定测试集           |       是 | V1/V2 应共享同一个 benchmark             |
+
+### 5.4 训练数据集版本
+
+模型版本与数据集版本必须解耦。V1、V2 表示模型架构版本，不应被用来表示训练数据的归属；一个模型架构可以在多个数据集版本上训练，同一个数据集版本也可以供多个模型架构公平比较。
+
+已经用于基线实验的数据集应视为不可变快照，并分配稳定的 `dataset_id`。后续需要增加训练样本时，不直接向冻结的 V1 数据目录追加，而是建立新的数据集内容版本。例如：
+
+```text
+dataset_id = case118_tcuc_n1000_r1   # 原基线数据快照
+dataset_id = case118_tcuc_n5000_r2   # 包含新增样本的新快照
+```
+
+每个版本可以使用独立的 `input_root`：
+
+```text
+datasets/
+├── case118_tcuc_n1000_r1/
+│   ├── case/<case>.xlsx
+│   └── <case>/samples/<uc>/<sid>.pkl
+└── case118_tcuc_n5000_r2/
+    ├── case/<case>.xlsx
+    └── <case>/samples/<uc>/<sid>.pkl
+```
+
+这里的版本是逻辑数据快照，不要求无条件复制所有大文件；实现时可以采用只读快照、reflink 或其他不会使旧数据被连带修改的存储方式。禁止通过可写 symlink 让新旧 `dataset_id` 指向同一批可变文件。
+
+新增数据按以下规则处理：
+
+- 采样逻辑、标签定义和字段完全不变，仅增加样本数量：保持 `dataset_schema_version` 不变，但创建新的 `dataset_id`。
+- 采样分布或生成配置改变但字段与标签语义不变：创建新的 `dataset_id`，通常不提升 `dataset_schema_version`。
+- 节点特征、标签含义、输入张量语义或文件 schema 改变：同时创建新的 `dataset_id` 并提升 `dataset_schema_version`。
+- 仅补齐一次尚未正式冻结、也未被实验引用的数据生成任务：可以在原 `input_root` 中续跑；一旦 manifest 引用了该数据集，就不得再原地增删样本。
+- 新增数据只用于 V2 探索时，可以只训练 V2，但不得将结果与旧数据上的 V1 基线描述为单一架构对比。
+- 需要比较 V1 与 V2 时，应在同一个新 `dataset_id`、相同样本划分和训练配置下，分别重新训练 V1 兼容架构和 V2 架构。历史 V1 基线及其数据快照继续保留。
+
+### 5.5 Processed data 复用与失效规则
+
+Processed tensors 是由数据快照和处理过程共同决定的可复用缓存，不属于某个模型版本或单次实验。V2 不应仅因为模型架构变化而机械地重新运行 process。满足以下条件时，V1 和 V2 可以直接只读共享同一份 processed data：
+
+- `dataset_id` 和 `dataset_fingerprint` 一致。
+- `dataset_schema_version` 一致。
+- process 代码版本和处理配置一致。
+- 样本筛选、排序及 train/test split 一致。
+- 序列化格式可由当前 loader 兼容读取。
+
+共享缓存使用 `process_fingerprint` 标识。该指纹至少由以下内容生成：
+
+```text
+dataset_fingerprint
+dataset_schema_version
+process_code_version
+process_config
+sample_selection_and_order
+train_test_split
+serialization_format
+```
+
+处理规则如下：
+
+- E0–E2 若未改变输入特征和 process 行为，应优先只读复用经过验证的 V1 processed data，无需在 V2 重复生成。
+- 增加、删除或替换 raw samples 后，`dataset_id` 和 `dataset_fingerprint` 改变，必须生成新的 processed cache。
+- 输入特征、标签或张量语义改变时，提升 `dataset_schema_version` 并生成新的 processed cache。
+- process 实现、处理配置、样本顺序或数据划分改变时，即使 schema 未变，也必须使用新的 `process_fingerprint`。
+- V1 legacy processed 若缺少来源和处理元数据，可以在验证样本数、shape、数据划分和内容一致性后作为只读 legacy cache 使用，并在 manifest 中标记；无法可靠验证时应重新生成。
+- 新生成的 processed tensors 写入独立的 `processed_root`，不得写回或覆盖 V1 legacy processed 文件。相同 `process_fingerprint` 对应的缓存一旦被 manifest 引用，也应视为不可变。
 
 ## 6. 实验 manifest 与 checkpoint
 
@@ -218,7 +288,15 @@ run_id
 git_commit
 model_type
 architecture_version
+dataset_id
 dataset_schema_version
+sample_count
+sample_id_range
+dataset_fingerprint
+process_fingerprint
+process_code_version
+process_config
+processed_path
 case
 uc_type
 sample_solver
@@ -233,6 +311,8 @@ checkpoint path
 test suite id
 created_at
 ```
+
+`dataset_schema_version` 描述字段、标签和张量语义；`dataset_id` 描述一次不可变的数据内容快照，两者不能互相替代。`dataset_fingerprint` 应由排序后的样本标识、样本内容校验值及影响采样结果的配置生成，用于检查同名数据集在不同机器上是否一致。`process_fingerprint` 则标识从该数据快照到 processed tensors 的完整处理过程。`sample_count` 应记录成功生成并实际参与处理的样本数，而不只记录请求数量。`processed_path` 可以指向 V1 的只读 legacy 文件或新的共享缓存，但必须与 manifest 中记录的指纹和处理元数据对应。
 
 运行摘要和论文表格应以 manifest 与结构化 result 为依据，不依赖日志文件推断实验条件。`manifest.json` 的具体格式、存放层级和生成方式后续单独讨论。
 
@@ -345,7 +425,7 @@ E0 是后续所有实验的前置条件。
 ### E3：Node Features
 
 - 提升 `dataset_schema_version`。
-- 在新实验目录中重新生成 processed tensors。
+- 使用新的 `process_fingerprint` 在 `processed_root` 中重新生成 processed tensors。
 - 保留旧 processed tensors。
 - 同时比较“V1 架构 + 新特征”和“V2 架构 + 新特征”，区分特征收益与架构收益。
 
@@ -380,7 +460,8 @@ V2 阶段性版本合并或打 tag 前，至少满足：
 - `main` 和 `model-v1.0.0` 未被改变。
 - V1 legacy checkpoint 仍可加载。
 - V1 回归测试通过。
-- V1/V2 的 processed、checkpoint、result 和 log 路径完全隔离。
+- 共享的 processed data 已通过数据与处理指纹验证并保持只读；不兼容的 processed cache 路径完全隔离。
+- V1/V2 的 checkpoint、result 和 log 路径完全隔离。
 - V1/V2 使用同一个固定测试集完成比较。
 - Fusion Attention 在 case5 完成端到端测试。
 - case118 至少完成一次受控对比。
@@ -406,10 +487,13 @@ model-v3.0.0-multitask       # 输出接口发生较大变化
 3. 新实验必须先指定稳定的 `comparison_id`，每次具体运行必须指定在该对比组内唯一的 `run_id`。
 4. 新架构先通过 case5，再运行更大的 case。
 5. 每次实验只引入一个主要变量。
-6. 任何会改变输入张量含义的修改都提升 `dataset_schema_version`。
-7. 任何不兼容的 checkpoint 变化都提升 `checkpoint_schema`。
-8. 对比报告必须引用固定测试集和完整 manifest。
-9. 不以复制、重命名临时文件代替正式的实验命名空间。
-10. 架构决策、已完成改动和实验结论及时回写项目文档。
+6. 已被 manifest 引用的数据集视为不可变；增加、删除或替换样本时创建新的 `dataset_id`。
+7. 任何会改变输入张量含义的修改都提升 `dataset_schema_version`。
+8. Processed data 仅在 `process_fingerprint` 一致时只读共享；处理输入或过程改变时生成新的缓存。
+9. 任何不兼容的 checkpoint 变化都提升 `checkpoint_schema`。
+10. V1/V2 架构对比必须使用相同的 `dataset_id`、`process_fingerprint`、样本划分和固定测试集。
+11. 对比报告必须引用固定测试集和完整 manifest。
+12. 不以复制、重命名临时文件代替正式的实验命名空间。
+13. 架构决策、已完成改动和实验结论及时回写项目文档。
 
-方案的核心是：使用 Git tag 和 worktree 保护源码基线，使用模型注册表保持运行兼容，使用 comparison/run namespace 保护派生产物，使用固定 benchmark 保证 V1/V2 比较公平。
+方案的核心是：使用 Git tag 和 worktree 保护源码基线，使用模型注册表保持运行兼容，使用数据与处理指纹安全复用 processed cache，使用 comparison/run namespace 保护模型及实验产物，使用固定 benchmark 保证 V1/V2 比较公平。
