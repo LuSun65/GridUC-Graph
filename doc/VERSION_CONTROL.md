@@ -142,40 +142,55 @@ MODEL_CLASSES = {
 
 ### 5.1 输入与输出使用不同根目录
 
-V2 应引入两个独立概念：
+V2 分支的新实验框架应引入两个独立概念：
 
 - `input_root`：case 文件和可共享的原始 samples。
 - `artifact_root`：当前实验的 processed data、checkpoint、result 和 log。
 
-V2 worktree 可以从 V1 目录只读访问已有的大体积输入，但新输出必须写入 V2 的实验目录。不要把整个 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 产物的风险。
+`artifact_root` 只在 V2 分支实现，不要求修改 `main`。新实验框架同时注册并运行 V1 兼容架构和 V2 架构，两者的输出通过不同 `run_id` 写入 V2 worktree 的实验目录。这里的 V1 指 V1 模型架构，而不是在冻结的 `main` worktree 中运行新的实验基础设施。
+
+V2 worktree 可以从 V1 目录只读访问已有的大体积输入和 legacy 产物，但所有新输出必须写入 V2 的 `artifact_root`。`main` worktree 及其现有 `data/<case>/model`、`data/<case>/result` 和 `log/` 保持只读。不要把整个 V1 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 产物的风险。
 
 ### 5.2 实验目录
 
-所有新派生产物按 `experiment_id` 隔离：
+Git branch 和 worktree 已经标识源码基线，具体架构则由运行配置和 manifest 记录，因此实验编号不再机械重复架构版本和日期。新派生产物使用两级编号：
+
+- `comparison_id`：表示一组使用相同 benchmark 和对比条件的实验。
+- `run_id`：表示该组中的一次具体运行，用于区分方案、随机种子或训练配置。
+
+V1 兼容架构和 V2 架构使用相同的 `comparison_id`，由 V2 实验框架写入同一个 `artifact_root`，再以不同 `run_id` 隔离。冻结的 V1 worktree 不需要实现或维护这套目录。
 
 ```text
 artifacts/
-└── experiments/
-    └── <experiment_id>/
-        ├── manifest.json
-        ├── processed/
-        │   └── <case>/<uc>.pt
-        ├── checkpoints/
-        │   └── <case>/<uc>/<model>.pt
-        ├── results/
-        │   └── <case>/<uc>/<test_suite>/<model>.pkl
-        └── logs/
-            └── <case>/...
+└── comparisons/
+    └── <comparison_id>/
+        └── runs/
+            └── <run_id>/
+                ├── manifest.json
+                ├── processed/
+                │   └── <case>/<uc>.pt
+                ├── checkpoints/
+                │   └── <case>/<uc>/<model>.pt
+                ├── results/
+                │   └── <case>/<uc>/<test_suite>/<model>.pkl
+                └── logs/
+                    └── <case>/...
 ```
 
-实验编号应简短、稳定且可读，例如：
+编号应简短、稳定且能说明对比目的。日期不作为核心编号；需要记录时间时，将其作为运行元数据保存。例如：
 
 ```text
-baseline_v1_20260811
-fusion_attn_v2_20260811
-dynamic_attn_v2_20260820
-node_features_v2_20260901
+comparison_id = fusion-attention_case118_tcuc
+
+V2 artifact_root（运行 V1 兼容架构）:
+  run_id = baseline_seed26
+
+V2 artifact_root（运行 V2 架构）:
+  run_id = fusion-attn_seed26
+  run_id = fusion-attn_seed27
 ```
+
+当一次运行同时覆盖多个 case 或 UC 类型时，可从 `comparison_id` 省略相应字段，由下层 `<case>/<uc>` 目录区分。`run_id` 只加入实际会区分运行的部分；架构类型已经由运行配置和 manifest 表达时，不必机械加入 V1/V2 字样。
 
 现有 `data/<case>/model`、`data/<case>/result` 和 `log/` 视为 legacy 产物，不移动、不重命名、不覆盖。
 
@@ -198,7 +213,8 @@ node_features_v2_20260901
 每个实验目录必须包含 manifest，至少记录：
 
 ```text
-experiment_id
+comparison_id
+run_id
 git_commit
 model_type
 architecture_version
@@ -218,7 +234,7 @@ test suite id
 created_at
 ```
 
-运行摘要和论文表格应以 manifest 与结构化 result 为依据，不依赖日志文件推断实验条件。
+运行摘要和论文表格应以 manifest 与结构化 result 为依据，不依赖日志文件推断实验条件。`manifest.json` 的具体格式、存放层级和生成方式后续单独讨论。
 
 ### 6.2 Checkpoint schema
 
@@ -350,7 +366,7 @@ E0 是后续所有实验的前置条件。
 - 现有 V1 checkpoint 可以加载和推理。
 - 固定 seed 下 V1 输出可复现。
 - V1/V2 能被同一个 trainer 和 tester 注册、调用。
-- 不同 `experiment_id` 生成不同产物路径。
+- 不同 `comparison_id` 或 `run_id` 生成不同产物路径。
 - V2 运行不会改变 legacy checkpoint/result 的内容、校验值和修改时间。
 - Attention 在无入边节点、线路全部 masked 等边界情况下不产生 NaN/Inf。
 - case5 能完成一次采样后处理、训练、加载、测试和汇总 smoke test。
@@ -387,7 +403,7 @@ model-v3.0.0-multitask       # 输出接口发生较大变化
 
 1. V2 开发只在 `feature/stgcn-v2` 对应 worktree 中进行。
 2. V1 源码和 legacy 产物默认只读。
-3. 新实验必须先指定唯一的 `experiment_id`。
+3. 新实验必须先指定稳定的 `comparison_id`，每次具体运行必须指定在该对比组内唯一的 `run_id`。
 4. 新架构先通过 case5，再运行更大的 case。
 5. 每次实验只引入一个主要变量。
 6. 任何会改变输入张量含义的修改都提升 `dataset_schema_version`。
@@ -396,4 +412,4 @@ model-v3.0.0-multitask       # 输出接口发生较大变化
 9. 不以复制、重命名临时文件代替正式的实验命名空间。
 10. 架构决策、已完成改动和实验结论及时回写项目文档。
 
-方案的核心是：使用 Git tag 和 worktree 保护源码基线，使用模型注册表保持运行兼容，使用 experiment namespace 保护派生产物，使用固定 benchmark 保证 V1/V2 比较公平。
+方案的核心是：使用 Git tag 和 worktree 保护源码基线，使用模型注册表保持运行兼容，使用 comparison/run namespace 保护派生产物，使用固定 benchmark 保证 V1/V2 比较公平。
