@@ -8,6 +8,7 @@ from typing import List, Tuple
 from lib.toolkit import load_pkl
 from lib.case_loader import UCData
 from lib.stgcn import STGCNInput
+from lib.experiment import ExperimentPaths
 
 
 def to_stgcn_input(uc: UCData, uc_type: str) -> STGCNInput:
@@ -85,13 +86,10 @@ def concat_stgcn_inputs(inputs: List[STGCNInput]) -> STGCNInput:
     )
 
 
-def processed_path(casename: str, uc_type: str) -> str:
-    return f"data/{casename}/processed/{uc_type}.pt"
-
-
-def list_sample_files(casename: str, uc_type: str) -> Tuple[str, List[str]]:
+def list_sample_files(casename: str, uc_type: str,
+                      paths: ExperimentPaths) -> Tuple[str, List[str]]:
     from lib.sampler import sample_dir
-    data_dir = sample_dir(casename, uc_type)
+    data_dir = sample_dir(casename, uc_type, paths)
     if not os.path.isdir(data_dir):
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
@@ -134,11 +132,12 @@ def _process_split(data_dir: str, files: List[str], uc_type: str,
 def process_data(
     casename: str,
     uc_type: str,
+    paths: ExperimentPaths,
     chunk_size: int = 200,
     train_ratio: float = 0.8,
     save: bool = True,
 ) -> Tuple[STGCNInput, STGCNInput]:
-    data_dir, files = list_sample_files(casename, uc_type)
+    data_dir, files = list_sample_files(casename, uc_type, paths)
 
     # Split the file list first and build each side separately: concatenating the
     # full set and slicing afterwards holds the entire dataset twice in memory.
@@ -149,27 +148,67 @@ def process_data(
                                f"{casename}/{uc_type} test")
 
     if save:
-        save_path = processed_path(casename, uc_type)
+        save_path = paths.processed_path(casename, uc_type)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        torch.save({'train': train_data, 'test': test_data}, save_path)
+        temporary = save_path.with_name(f".{save_path.name}.{os.getpid()}.tmp")
+        try:
+            torch.save({'train': train_data, 'test': test_data}, temporary)
+            os.replace(temporary, save_path)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
         print(f"[process] saved processed data to {save_path}")
 
     return train_data, test_data
 
 
 def load_processed_data(
-    casename: str,
-    uc_type: str,
+    path,
+    expected_sample_count: int = None,
 ) -> Tuple[STGCNInput, STGCNInput]:
-    save_path = processed_path(casename, uc_type)
-    if not os.path.exists(save_path):
-        raise FileNotFoundError(
-            f"Processed data file not found: {save_path}\n"
-            f"Run `python main.py process --case {casename} --uc {uc_type}` first."
+    path = os.fspath(path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Processed data file not found: {path}")
+    data = torch.load(path, weights_only=False)
+    validate_processed_data(data, expected_sample_count)
+    print(f"[load] processed data <- {path}")
+    return data['train'], data['test']
+
+
+def validate_processed_data(data: dict, expected_sample_count: int = None) -> None:
+    """Perform lightweight compatibility checks for new or legacy tensors."""
+    if not isinstance(data, dict) or "train" not in data or "test" not in data:
+        raise ValueError("Processed file must contain train and test entries")
+
+    required = ("node_feat_s", "node_feat_d", "edge_index", "edge_attr",
+                "gen_bus", "edge_mask", "uc_target")
+    counts = []
+    for split_name in ("train", "test"):
+        split = data[split_name]
+        missing = [field for field in required if not hasattr(split, field)]
+        if missing:
+            raise ValueError(
+                f"Processed {split_name} split is missing fields: {missing}"
+            )
+        count = split.node_feat_s.shape[0]
+        counts.append(count)
+        for field in ("node_feat_d", "edge_attr", "edge_mask", "uc_target"):
+            value = getattr(split, field)
+            if value is not None and value.shape[0] != count:
+                raise ValueError(
+                    f"Processed {split_name}.{field} has inconsistent batch size"
+                )
+    if expected_sample_count is not None and sum(counts) != expected_sample_count:
+        raise ValueError(
+            f"Processed sample count mismatch: expected {expected_sample_count}, "
+            f"got {sum(counts)}"
         )
-    print(f"[load] processed data <- {save_path}")
-    d = torch.load(save_path, weights_only=False)
-    return d['train'], d['test']
+    for field in ("edge_index", "gen_bus"):
+        if not torch.equal(getattr(data["train"], field),
+                           getattr(data["test"], field)):
+            raise ValueError(
+                f"Processed train/test {field} values do not match"
+            )
 
 
 class STGCNDataset(Dataset):

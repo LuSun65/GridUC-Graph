@@ -6,6 +6,7 @@ from lib.case_loader import UCData, load_case
 from lib.case_modifier import case_tcuc_rnd, case_topo_rnd, case_scuc_rnd
 from lib.uc_model import build_uc, solve_uc, UCConfig
 from lib.toolkit import tic, toc, setlog, set_rnd_seed, save_pkl
+from lib.experiment import ExperimentPaths
 
 CASE_MODIFIERS = {
     "tcuc": case_tcuc_rnd,
@@ -30,16 +31,16 @@ def sample_uc(input_uc: UCData, uc_type: str, config: UCConfig, mode: str = "den
     return uc_data, result
 
 
-def sample_dir(casename: str, uc_type: str) -> str:
-    return f"data/{casename}/samples/{uc_type}"
+def sample_dir(casename: str, uc_type: str, paths: ExperimentPaths):
+    return paths.sample_dir(casename, uc_type)
 
 
-def sample_path(casename: str, uc_type: str, sid: int) -> str:
-    return f"{sample_dir(casename, uc_type)}/{sid}.pkl"
+def sample_path(casename: str, uc_type: str, sid: int, paths: ExperimentPaths):
+    return sample_dir(casename, uc_type, paths) / f"{sid}.pkl"
 
 
 def _sample_one(case: UCData, casename: str, uc_type: str, sid: int,
-                config: UCConfig, mode: str):
+                config: UCConfig, mode: str, paths: ExperimentPaths):
     try:
         t0 = tic()
         sample, result = sample_uc(case, uc_type, config, mode=mode)
@@ -50,28 +51,31 @@ def _sample_one(case: UCData, casename: str, uc_type: str, sid: int,
             print(f"[{uc_type}] sample {sid} FAILED (not saved), time={elapsed:.2f}s")
             return
         print(f"[{uc_type}] sample {sid} SUCCESS, time={elapsed:.2f}s")
-        save_pkl(sample, sample_path(casename, uc_type, sid))
+        save_pkl(sample, sample_path(casename, uc_type, sid, paths))
     except Exception:
         print(f"[{uc_type}] sample {sid} ERROR:\n{traceback.format_exc()}")
 
 
 def _sample_worker(args):
-    casename, uc_type, sid, config, mode = args
-    setlog(f"log/{casename}/sample/sample_{uc_type}.log")
+    casename, uc_type, sid, config, mode, paths = args
+    setlog(paths.log_path(casename, "sample", f"sample_{uc_type}.log"))
     set_rnd_seed(SEED_BASE + sid)
-    case = load_case(casename)
-    _sample_one(case, casename, uc_type, sid, config, mode)
+    case = load_case(casename, data_dir=paths.case_dir())
+    _sample_one(case, casename, uc_type, sid, config, mode, paths)
 
 
 def run_sampling(casename: str, uc_type: str, start: int, end: int,
+                 paths: ExperimentPaths,
                  mode: str = "dense", workers=None, skip_existing: bool = False,
-                 time_limit: float = 3600.0, mip_gap: float = 1e-3, verbose: int = 0):
-    setlog(f"log/{casename}/sample/sample_{uc_type}.log")
-    config = UCConfig(verbose=verbose, mip_gap=mip_gap, time_limit=time_limit)
+                 config: UCConfig = None):
+    setlog(paths.log_path(casename, "sample", f"sample_{uc_type}.log"))
+    if config is None:
+        config = UCConfig()
 
     sids = list(range(start, end + 1))
     if skip_existing:
-        done = {s for s in sids if os.path.exists(sample_path(casename, uc_type, s))}
+        done = {s for s in sids
+                if os.path.exists(sample_path(casename, uc_type, s, paths))}
         sids = [s for s in sids if s not in done]
         if done:
             print(f"[{uc_type}] skip {len(done)} existing samples")
@@ -82,13 +86,13 @@ def run_sampling(casename: str, uc_type: str, start: int, end: int,
     print(f"[{uc_type}] sampling {casename}: {len(sids)} samples, workers={workers}")
 
     if workers is None:
-        case = load_case(casename)
+        case = load_case(casename, data_dir=paths.case_dir())
         for sid in sids:
             set_rnd_seed(SEED_BASE + sid)
-            _sample_one(case, casename, uc_type, sid, config, mode)
+            _sample_one(case, casename, uc_type, sid, config, mode, paths)
     else:
         if workers == "auto":
             workers = cpu_count()
-        tasks = [(casename, uc_type, sid, config, mode) for sid in sids]
+        tasks = [(casename, uc_type, sid, config, mode, paths) for sid in sids]
         with Pool(int(workers)) as pool:
             pool.map(_sample_worker, tasks)

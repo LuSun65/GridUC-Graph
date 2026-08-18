@@ -7,6 +7,7 @@ from torch.optim import Adam
 from lib.stgcn import STGCN
 from lib.mlp import MLP
 from lib.data_loader import load_processed_data, make_dataloader
+from lib.experiment import ExperimentPaths
 
 MODEL_CLASSES = {
     "stgcn": STGCN,
@@ -14,19 +15,22 @@ MODEL_CLASSES = {
 }
 
 
-def model_path(model_type: str, casename: str, uc_type: str) -> str:
-    return f"data/{casename}/model/{uc_type}_{model_type}.pt"
+def model_path(model_type: str, casename: str, uc_type: str,
+               paths: ExperimentPaths):
+    return paths.checkpoint_path(casename, uc_type, model_type)
 
 
-def save_model(model, model_type: str, casename: str, uc_type: str):
-    path = model_path(model_type, casename, uc_type)
+def save_model(model, model_type: str, casename: str, uc_type: str,
+               paths: ExperimentPaths):
+    path = model_path(model_type, casename, uc_type, paths)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({'config': model.config, 'state_dict': model.state_dict()}, path)
     print(f"[SAVED] {model_type} model -> {path}")
 
 
-def load_model(model_type: str, casename: str, uc_type: str, device: str = "cpu"):
-    path = model_path(model_type, casename, uc_type)
+def load_model(model_type: str, casename: str, uc_type: str,
+               paths: ExperimentPaths, device: str = "cpu"):
+    path = model_path(model_type, casename, uc_type, paths)
     if not os.path.exists(path):
         raise FileNotFoundError(f"Model file not found: {path}")
     checkpoint = torch.load(path, weights_only=False, map_location=device)
@@ -60,6 +64,9 @@ def train_model(
     model_type: str,
     casename: str,
     uc_type: str,
+    paths: ExperimentPaths,
+    processed_path,
+    expected_sample_count: int = None,
     epochs: int = 20,
     batch_size: int = 32,
     lr: float = 1e-3,
@@ -71,7 +78,9 @@ def train_model(
 ):
     dev = torch.device(device)
 
-    train_data, test_data = load_processed_data(casename, uc_type)
+    train_data, test_data = load_processed_data(
+        processed_path, expected_sample_count=expected_sample_count
+    )
     train_loader = make_dataloader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = make_dataloader(test_data, batch_size=batch_size, shuffle=False)
 
@@ -129,6 +138,6 @@ def train_model(
     # Written once, at the end: on the big cases a checkpoint is over a gigabyte
     # and saving on every improvement dominates the epoch time.
     if save_best:
-        save_model(model, model_type, casename, uc_type)
+        save_model(model, model_type, casename, uc_type, paths)
     print(f"\n[DONE] {model_type} | {casename} / {uc_type}  best_test_loss={best_test_loss:.4f}")
     return model

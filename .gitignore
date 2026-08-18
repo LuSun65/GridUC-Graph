@@ -3,6 +3,9 @@ data/
 log/
 report/
 
+# Generated run outputs
+/runs/
+
 # Model/checkpoint and serialized data artifacts
 *.pt
 *.pth

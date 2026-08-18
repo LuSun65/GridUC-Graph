@@ -11,6 +11,7 @@ from lib.uc_model import (UCConfig, UCResult, build_uc, solve_uc, add_fix_uc,
 from lib.data_loader import to_stgcn_input
 from lib.trainer import load_model
 from lib.toolkit import save_pkl, load_pkl, set_rnd_seed
+from lib.experiment import ExperimentPaths
 
 # Test scenarios live in their own seed range so they can never collide with the
 # training samples drawn at sampler.SEED_BASE + sid.
@@ -113,7 +114,7 @@ def run_test(uc_data: UCData, uc_type: str, test_id: int, model,
              threshold_start: float = 0.95, threshold_step: float = 0.01,
              device: str = "cpu", config: UCConfig = None) -> dict:
     if config is None:
-        config = UCConfig(verbose=0, mip_gap=1e-3, time_limit=3600.0)
+        config = UCConfig()
 
     probs, nn_time = get_probs(model, uc_data, uc_type, device)
 
@@ -164,25 +165,28 @@ def run_test(uc_data: UCData, uc_type: str, test_id: int, model,
     return cmp
 
 
-def result_path(model_type: str, casename: str, uc_type: str) -> str:
-    return f"data/{casename}/result/{uc_type}_{model_type}.pkl"
+def result_path(model_type: str, casename: str, uc_type: str,
+                paths: ExperimentPaths):
+    return paths.result_path(casename, uc_type, model_type)
 
 
-def save_results(res: dict, path: str = None):
+def save_results(res: dict, paths: ExperimentPaths, path=None):
     if path is None:
-        path = result_path(res["model"], res["casename"], res["uc_type"])
+        path = result_path(res["model"], res["casename"], res["uc_type"], paths)
     save_pkl(res, path)
     print(f"[SAVED] results -> {path}")
 
 
-def load_results(model_type: str, casename: str, uc_type: str) -> dict:
-    path = result_path(model_type, casename, uc_type)
+def load_results(model_type: str, casename: str, uc_type: str,
+                 paths: ExperimentPaths) -> dict:
+    path = result_path(model_type, casename, uc_type, paths)
     if not os.path.exists(path):
         raise FileNotFoundError(f"Result file not found: {path}")
     return load_pkl(path)
 
 
 def generate_test_cases(casename: str, uc_type: str, n_test: int,
+                        paths: ExperimentPaths,
                         mode: str = "dense", config: UCConfig = None) -> list:
     """Draw fresh random scenarios and solve them to optimality as ground truth.
 
@@ -193,9 +197,9 @@ def generate_test_cases(casename: str, uc_type: str, n_test: int,
     per-model comparison meaningful.
     """
     if config is None:
-        config = UCConfig(verbose=0, mip_gap=1e-3, time_limit=3600.0)
+        config = UCConfig()
 
-    case = load_case(casename)
+    case = load_case(casename, data_dir=paths.case_dir())
     test_cases = []
     for i in range(n_test):
         set_rnd_seed(TEST_SEED_BASE + i)
@@ -211,12 +215,12 @@ def generate_test_cases(casename: str, uc_type: str, n_test: int,
 
 
 def run_testing(model_type: str, casename: str, uc_type: str,
-                test_cases: list, mode: str = "dense",
+                test_cases: list, paths: ExperimentPaths, mode: str = "dense",
                 threshold_start: float = 0.95, threshold_step: float = 0.01,
-                device: str = "cpu",
-                time_limit: float = 3600.0, mip_gap: float = 1e-3) -> dict:
-    model = load_model(model_type, casename, uc_type, device=device)
-    config = UCConfig(verbose=0, mip_gap=mip_gap, time_limit=time_limit)
+                device: str = "cpu", config: UCConfig = None) -> dict:
+    model = load_model(model_type, casename, uc_type, paths, device=device)
+    if config is None:
+        config = UCConfig()
 
     cmp_list = []
     n_error = 0
@@ -240,18 +244,18 @@ def run_testing(model_type: str, casename: str, uc_type: str,
         "n_error": n_error,
         "cmp_list": cmp_list,
     }
-    save_results(res)
+    save_results(res, paths)
     return res
 
 
 def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
-                       models=("mlp", "stgcn")):
+                       models=("mlp", "stgcn"), *, paths: ExperimentPaths):
     all_res = {}
     for uc in uc_types:
         all_res[uc] = {}
         for m in models:
             try:
-                all_res[uc][m] = load_results(m, casename, uc)
+                all_res[uc][m] = load_results(m, casename, uc, paths)
             except FileNotFoundError:
                 pass
 

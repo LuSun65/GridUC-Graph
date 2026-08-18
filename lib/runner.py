@@ -4,14 +4,15 @@ import traceback
 
 from lib.toolkit import setlog
 from lib.sampler import sample_dir, run_sampling
-from lib.data_loader import processed_path, process_data
+from lib.data_loader import process_data
 from lib.trainer import model_path, train_model
 from lib.tester import generate_test_cases, run_testing, print_case_summary
 from lib.uc_model import SOLVE_MODES
+from lib.experiment import ExperimentPaths
 
 
-def _check_samples(case, uc_type):
-    d = sample_dir(case, uc_type)
+def _check_samples(case, uc_type, paths):
+    d = sample_dir(case, uc_type, paths)
     if not os.path.isdir(d):
         raise FileNotFoundError(f"No samples found: {d}")
     good = [f for f in os.listdir(d)
@@ -20,14 +21,28 @@ def _check_samples(case, uc_type):
         raise FileNotFoundError(f"No usable samples in {d} (directory empty or all files 0 bytes)")
 
 
-def _check_processed(case, uc_type):
-    p = processed_path(case, uc_type)
-    if not os.path.exists(p):
-        raise FileNotFoundError(f"Processed data not found: {p}")
+def _check_processed(path):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Processed data not found: {path}")
 
 
-def _check_model(case, uc_type, model_type):
-    p = model_path(model_type, case, uc_type)
+def _processed_source(paths, configured_path, case, uc_type, generated):
+    if generated:
+        return paths.processed_path(case, uc_type)
+    if configured_path is None:
+        return paths.default_input_processed_path(case, uc_type)
+    return os.fspath(configured_path).format(case=case, uc=uc_type)
+
+
+def _sample_count(case, uc_type, paths):
+    directory = sample_dir(case, uc_type, paths)
+    if not os.path.isdir(directory):
+        return None
+    return sum(name.endswith(".pkl") for name in os.listdir(directory))
+
+
+def _check_model(case, uc_type, model_type, paths):
+    p = model_path(model_type, case, uc_type, paths)
     if not os.path.exists(p):
         raise FileNotFoundError(f"Model not found: {p}")
 
@@ -45,69 +60,84 @@ def _run_task(label, fn):
         return False
 
 
-def run_sample(case, n_samples, uc_types, mode="dense", workers=None):
+def run_sample(case, n_samples, uc_types, paths, mode="dense", workers=None):
     failed = []
     for uc in uc_types:
         ok = _run_task(f"sample {case}/{uc}", lambda uc=uc: (
             run_sampling(casename=case, uc_type=uc, start=0, end=n_samples - 1,
-                         mode=mode, skip_existing=True, workers=workers)
+                         paths=paths, mode=mode, skip_existing=True, workers=workers)
         ))
         if not ok:
             failed.append(f"sample {case}/{uc}")
     return failed
 
 
-def run_process(case, uc_types):
+def run_process(case, uc_types, paths, chunk_size, train_ratio):
     failed = []
     for uc in uc_types:
-        _check_samples(case, uc)
+        _check_samples(case, uc, paths)
         ok = _run_task(f"process {case}/{uc}", lambda uc=uc: (
-            setlog(f"log/{case}/sample/process_{uc}.log"),
-            process_data(casename=case, uc_type=uc, save=True),
+            setlog(paths.log_path(case, "sample", f"process_{uc}.log")),
+            process_data(
+                casename=case, uc_type=uc, paths=paths,
+                chunk_size=chunk_size, train_ratio=train_ratio, save=True,
+            ),
         ))
         if not ok:
             failed.append(f"process {case}/{uc}")
     return failed
 
 
-def run_train(case, uc_types, models, epochs=20, device="cpu", batch_size=32):
+def run_train(case, uc_types, models, paths, configured_processed_path,
+              generated_processed,
+              epochs=20, device="cpu", batch_size=32):
     failed = []
     for uc in uc_types:
-        _check_processed(case, uc)
+        source = _processed_source(
+            paths, configured_processed_path, case, uc, generated_processed
+        )
+        _check_processed(source)
+        expected_count = _sample_count(case, uc, paths)
         for m in models:
             ok = _run_task(f"train {case}/{uc}/{m}", lambda uc=uc, m=m: (
-                setlog(f"log/{case}/train/train_{uc}_{m}.log", overwrite=True),
+                setlog(paths.log_path(case, "train", f"train_{uc}_{m}.log"),
+                       overwrite=True),
                 train_model(model_type=m, casename=case, uc_type=uc,
-                            epochs=epochs, device=device, batch_size=batch_size),
+                            paths=paths, epochs=epochs, device=device,
+                            batch_size=batch_size,
+                            processed_path=source,
+                            expected_sample_count=expected_count),
             ))
             if not ok:
                 failed.append(f"train {case}/{uc}/{m}")
     return failed
 
 
-def run_test(case, uc_types, models, n_test=20, mode="dense", device="cpu"):
+def run_test(case, uc_types, models, paths, n_test=20, mode="dense", device="cpu"):
     failed = []
     for uc in uc_types:
-        setlog(f"log/{case}/test/gen_{uc}.log", overwrite=True)
+        setlog(paths.log_path(case, "test", f"gen_{uc}.log"), overwrite=True)
         print(f"\n[gen] generating {n_test} test cases for {case}/{uc}")
-        test_cases = generate_test_cases(case, uc, n_test, mode=mode)
+        test_cases = generate_test_cases(case, uc, n_test, paths, mode=mode)
         for m in models:
-            _check_model(case, uc, m)
+            _check_model(case, uc, m, paths)
             ok = _run_task(f"test {case}/{uc}/{m}", lambda uc=uc, m=m: (
-                setlog(f"log/{case}/test/test_{uc}_{m}.log", overwrite=True),
+                setlog(paths.log_path(case, "test", f"test_{uc}_{m}.log"),
+                       overwrite=True),
                 run_testing(model_type=m, casename=case, uc_type=uc,
-                            test_cases=test_cases, mode=mode, device=device),
+                            test_cases=test_cases, paths=paths, mode=mode,
+                            device=device),
             ))
             if not ok:
                 failed.append(f"test {case}/{uc}/{m}")
     return failed
 
 
-def run_summary(case):
+def run_summary(case, paths):
     failed = []
     ok = _run_task(f"summary {case}", lambda: (
-        setlog(f"log/{case}/summary/summary.log", overwrite=True),
-        print_case_summary(case),
+        setlog(paths.log_path(case, "summary", "summary.log"), overwrite=True),
+        print_case_summary(case, paths=paths),
     ))
     if not ok:
         failed.append(f"summary {case}")
@@ -119,7 +149,9 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             device="cpu", workers=None,
             sample_solver="dense", test_solver="dense",
             uc_types=("tcuc", "topo", "scuc"),
-            models=("stgcn", "mlp")):
+            models=("stgcn", "mlp"), *,
+            input_root="data", output_root=".", run_id: str,
+            processed_path=None, process_chunk_size=200, train_ratio=0.8):
     """
     sample_solver / test_solver: transmission-security formulation used when
     generating training labels and when testing, respectively. One of
@@ -132,21 +164,36 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
         if m not in SOLVE_MODES:
             raise ValueError(f"Unknown solve mode: {m!r}, expected one of {SOLVE_MODES}")
 
+    paths = ExperimentPaths(
+        input_root=input_root,
+        output_root=output_root,
+        run_id=run_id,
+    )
+    print(f"[paths] input_root={paths.input_root}")
+    print(f"[paths] run_root={paths.run_root}")
+    generated_processed = "process" in stages
+
     all_failed = []
     for stage in stages:
         print(f"\n{'=' * 80}")
         print(f"  STAGE: {stage}")
         print(f"{'=' * 80}")
         if stage == "sample":
-            failed = run_sample(case, n_samples, uc_types, sample_solver, workers)
+            failed = run_sample(case, n_samples, uc_types, paths, sample_solver, workers)
         elif stage == "process":
-            failed = run_process(case, uc_types)
+            failed = run_process(
+                case, uc_types, paths, process_chunk_size, train_ratio,
+            )
         elif stage == "train":
-            failed = run_train(case, uc_types, models, epochs, device, batch_size)
+            failed = run_train(
+                case, uc_types, models, paths, processed_path,
+                generated_processed,
+                epochs, device, batch_size,
+            )
         elif stage == "test":
-            failed = run_test(case, uc_types, models, n_test, test_solver, device)
+            failed = run_test(case, uc_types, models, paths, n_test, test_solver, device)
         elif stage == "summary":
-            failed = run_summary(case)
+            failed = run_summary(case, paths)
         else:
             print(f"Unknown stage: {stage}")
             continue
