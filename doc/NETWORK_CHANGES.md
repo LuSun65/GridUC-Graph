@@ -185,7 +185,7 @@ TBD
 
 Graph attention can be introduced in the current STGCN architecture in two main places.
 
-The recommended first target is the Fusion branch. The current Fusion branch combines static and dynamic node embeddings, then applies one `ChebConvLayer`:
+The first target is the Fusion branch. The current Fusion branch combines static and dynamic node embeddings, then applies one `ChebConvLayer`:
 
 ```text
 x_static [B, N, H] + x_dynamic [B, N, H]
@@ -217,7 +217,7 @@ Reasons:
 - The change is localized to `FusionModule`, with limited impact on the rest of the model.
 - It is cheaper and lower-risk than applying attention inside every dynamic time step.
 
-The second possible target is the Dynamic branch. Each `STConvBlock` currently follows:
+The second target is the Dynamic branch. Each `STConvBlock` currently follows:
 
 ```text
 TemporalConv

@@ -45,8 +45,8 @@ GE-Sampling/
 ├── run_case118.py
 ├── run_case2383.py
 ├── run_case6515.py
-├── data/                # data: data/case holds the source xlsx, data/<case>/ holds each case's generated artifacts (gitignored)
-├── log/                 # run logs (gitignored)
+├── data/                # default input_root: case definitions and reusable raw samples
+├── runs/                # per-run, case-scoped outputs (gitignored)
 └── .gitignore
 ```
 
@@ -78,6 +78,10 @@ python run_case2383.py    # case2383
 python run_case6515.py    # case6515: large case, slow to sample and to solve
 ```
 
+The checked-in case scripts resolve `input_root` to the sibling frozen V1
+worktree (`../GridUC-Graph/data`) and write each run directly below this V2
+worktree. Adjust `V1_INPUT_ROOT` if the two worktrees are stored elsewhere.
+
 Each script is just a single `run_all` call:
 
 ```python
@@ -95,6 +99,9 @@ if __name__ == "__main__":
         sample_solver="dense",
         test_solver="dense",
         workers=None,
+        input_root="data",
+        output_root=".",
+        run_id="r001",
     )
 ```
 
@@ -113,6 +120,12 @@ if __name__ == "__main__":
 | `test_solver` | `dense` | The mode used in the test stage, for both ground truth and the accelerated solve |
 | `uc_types` | all three | A subset of `("tcuc", "topo", "scuc")` |
 | `models` | both | A subset of `("stgcn", "mlp")` |
+| `input_root` | `data` | Read source for `case/*.xlsx` and reusable `<case>/samples/<uc>/*.pkl` |
+| `output_root` | `.` | Writable parent directory for per-run outputs |
+| `run_id` | required | Identifier for this concrete run; one safe path component |
+| `process_chunk_size` | `200` | Number of samples converted per processing chunk |
+| `train_ratio` | `0.8` | Sequential train/test split used when processing |
+| `processed_path` | none | Optional path template such as `/v1/data/{case}/processed/{uc}.pt`; used when the process stage is omitted |
 
 `stages` is the mechanism for resuming: if the models are already trained and you only want to re-evaluate, pass `stages=["test", "summary"]`.
 
@@ -122,13 +135,13 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 **sample** — Generate UC samples together with their optimal solutions, one `pkl.gz` per sample. With `skip_existing=True`, re-running only fills in the missing samples. A failed single-sample solve affects only that sample.
 
-**process** — Raw samples → training tensors `.pt`. Chunk size is 200 (to avoid memory blow-up on large cases); the train/test split is a sequential 0.8 cut.
+**process** — Raw samples → training tensors `.pt` below the current run. Chunk size is 200 by default and the train/test split is a sequential 0.8 cut. Omit this stage and set `processed_path` to reuse an existing V1 or earlier-run file.
 
-**train** — The best model by test loss is saved to `data/<case>/model/<uc>_<model>.pt`, with checkpoint structure `{config, state_dict}`.
+**train** — The best model by test loss is saved at `runs/<run_id>/<case>/checkpoints/<uc>/<model>.pt`, with checkpoint structure `{config, state_dict}`.
 
 The two models differ in size by three orders of magnitude: on case6515 the MLP's first layer flattens the input into 682,320 dimensions fully connected to 512, for 3.6×10⁸ parameters (1.45GB); the STGCN shares weights over nodes and edges, for 7.5×10⁵ parameters (3.0MB).
 
-**test** — First generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Results are stored in `data/<case>/result/<uc>_<model>.pkl`.
+**test** — First generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Results are stored at `runs/<run_id>/<case>/results/<uc>/<model>.pkl`.
 
 **summary** — Reprint the summary table from stored results, so format changes need no re-testing (`print_case_summary` in `lib/tester.py`).
 
@@ -140,7 +153,7 @@ The threshold ramps from 0.95 to 1.0 in steps of 0.01 — the higher the thresho
 
 > These solves at different thresholds are independent, so in production they could run in parallel and take the fastest feasible solution; this repository runs them serially because of limited compute (see `run_test` in `lib/tester.py`). On large cases, rebuilding the model per threshold dominates the runtime.
 
-The Gurobi parameters are hard-coded in `lib/tester.py` as `time_limit=3600.0` and `mip_gap=1e-3`, and identically in the sample stage (`lib/sampler.py`).
+The default Gurobi parameters are defined by `UCConfig` in `lib/uc_model.py` and shared by the sampling and testing stages. Pass a customized `UCConfig` to override them for a specific run.
 
 ### Test case generation
 
@@ -157,7 +170,7 @@ If a case fails to solve within the time limit during generation, `FAILED to sol
 
 Crossing them is a supported experiment (e.g. train on `none` labels and evaluate against `dense` ground truth): the mode only changes the MILP's constraint set, not the `UCData` fields, the feature tensors, or the model architecture, so a model trained under any mode can be tested under any mode.
 
-**File names do not encode the mode**: the samples / processed / model / result paths are distinguished only by `case` and `uc_type`. The cost is that re-running with a different mode overwrites in place — to keep results for comparison, copy `data/<case>` aside yourself.
+Choose a different `run_id` whenever outputs must be retained separately. Data and comparison details belong in the experiment manifest rather than the directory name.
 
 Before a sample is written to disk, the dense PTDF matrices are stripped out (a single matrix reaches GB scale on large cases); on read-back, `restore_ptdf` deterministically rebuilds them from the topology and the random draws (`maintenance_line` / `cc_monitor`).
 
@@ -178,37 +191,44 @@ The per-sample details (including the threshold actually used for each sample, p
 
 ## Logs
 
-Every stage writes logs automatically to `log/<case>/<stage>/` (and also to the terminal). `sample` and `process` both belong to the sampling stage and both write into `sample/`:
+Every stage writes logs automatically below the current run's `<case>/logs/<stage>/` (and also to the terminal). `sample` and `process` both belong to the sampling stage and both write into `sample/`:
 
 ```
-log/<case>/sample/sample_<uc>.log         # append mode (multiprocessing-safe)
-log/<case>/sample/process_<uc>.log
-log/<case>/train/train_<uc>_<model>.log   # overwrite mode
-log/<case>/test/gen_<uc>.log              # test case generation
-log/<case>/test/test_<uc>_<model>.log
-log/<case>/summary/summary.log
+runs/<run_id>/<case>/logs/sample/sample_<uc>.log         # append mode (multiprocessing-safe)
+runs/<run_id>/<case>/logs/sample/process_<uc>.log
+runs/<run_id>/<case>/logs/train/train_<uc>_<model>.log   # overwrite mode inside this run only
+runs/<run_id>/<case>/logs/test/gen_<uc>.log              # test case generation
+runs/<run_id>/<case>/logs/test/test_<uc>_<model>.log
+runs/<run_id>/<case>/logs/summary/summary.log
 ```
 
-Note that the train/test logs are in **overwrite** mode, so re-running wipes the previous records. Copy them aside first if you want to keep them.
+Train/test logs use overwrite mode within one `run_id`. Use a new `run_id` to retain a previous execution.
 
-## Data directory
+## Input and output directories
 
-All generated artifacts are collected under one `data/<case>/` subtree (mirroring `log/<case>/`), so deleting, copying, or backing up a case touches a single folder:
+Inputs and generated artifacts have separate roots. `input_root` may point at the V1 worktree's data directory and can be mounted read-only when the `sample` stage is not used:
 
 ```
-data/case/                              # case definition xlsx (the only data checked into git)
-data/<case>/
-├── samples/<uc>/<sid>.pkl              # raw samples, one pkl.gz per sample
-├── processed/<uc>.pt                   # preprocessed tensors
-├── processed/.tmp/                     # temporary chunk files from process (cleaned up automatically)
-├── model/<uc>_<stgcn|mlp>.pt           # trained models
-└── result/<uc>_<model>.pkl             # test results (pkl.gz), the data source for summary
+<input_root>/
+├── case/<case>.xlsx
+└── <case>/
+    ├── samples/<uc>/<sid>.pkl
+    └── processed/<uc>.pt             # optional reusable legacy input
+
+<output_root>/runs/<run_id>/
+└── <case>/
+    ├── processed/<uc>.pt          # only when this run processes data
+    ├── checkpoints/<uc>/<model>.pt
+    ├── logs/<stage>/...
+    └── results/<uc>/<model>.pkl
 ```
 
-When moving between machines: `processed/` is generated deterministically from `samples/`, so just re-run the `process` stage instead of transferring it; the MLP checkpoints in `model/` reach GB scale on large cases. Checkpoint loading uses `map_location`, so weights trained on CUDA load directly on mps/cpu.
+The `sample` stage creates reusable raw samples under `input_root`, so that stage requires a writable input root. New processed tensors are written only to the current run. When `process` is omitted, training reads `input_root/<case>/processed/<uc>.pt` by default, or the explicit `processed_path` template. Existing files are never rewritten. The loader performs lightweight checks of train/test entries, tensor batch dimensions, graph fields, and—when raw samples are available—the total sample count.
+
+When moving between machines: `processed/` is generated deterministically from `samples/`, so just re-run the `process` stage instead of transferring it; MLP checkpoints can reach GB scale on large cases. Checkpoint loading uses `map_location`, so weights trained on CUDA load directly on mps/cpu.
 
 ## .gitignore rules
 
-- `log/`: no run logs are committed.
-- `data/*` except `data/case/`: each case subtree (`data/<case>/`, holding samples, tensors, models, results) is regenerable and is not committed; the case definitions are kept.
+- `/runs/`: generated run outputs are not committed.
+- `data/`: the default local input root is not committed.
 - Python caches (`__pycache__/` etc.), virtual environments (`.venv/` etc.), IDE configs (`.vscode/`, `.idea/`, `.claude/`), and macOS metadata (`.DS_Store` etc.) are all ignored.
