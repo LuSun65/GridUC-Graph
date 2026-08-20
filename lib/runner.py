@@ -6,6 +6,7 @@ from lib.toolkit import setlog
 from lib.sampler import sample_dir, run_sampling
 from lib.data_loader import process_data
 from lib.trainer import model_path, train_model
+from lib.model_registry import canonical_model_type
 from lib.tester import generate_test_cases, run_testing, print_case_summary
 from lib.uc_model import SOLVE_MODES
 from lib.experiment import ExperimentPaths
@@ -90,7 +91,7 @@ def run_process(case, uc_types, paths, chunk_size, train_ratio):
 
 def run_train(case, uc_types, models, paths, configured_processed_path,
               generated_processed,
-              epochs=20, device="cpu", batch_size=32):
+              epochs=20, device="cpu", batch_size=32, random_seed=42):
     failed = []
     for uc in uc_types:
         source = _processed_source(
@@ -105,6 +106,7 @@ def run_train(case, uc_types, models, paths, configured_processed_path,
                 train_model(model_type=m, casename=case, uc_type=uc,
                             paths=paths, epochs=epochs, device=device,
                             batch_size=batch_size,
+                            random_seed=random_seed,
                             processed_path=source,
                             expected_sample_count=expected_count),
             ))
@@ -133,11 +135,12 @@ def run_test(case, uc_types, models, paths, n_test=20, mode="dense", device="cpu
     return failed
 
 
-def run_summary(case, paths):
+def run_summary(case, paths, uc_types=("tcuc", "topo", "scuc"),
+                models=("mlp", "stgcn_v1")):
     failed = []
     ok = _run_task(f"summary {case}", lambda: (
         setlog(paths.log_path(case, "summary", "summary.log"), overwrite=True),
-        print_case_summary(case, paths=paths),
+        print_case_summary(case, uc_types=uc_types, models=models, paths=paths),
     ))
     if not ok:
         failed.append(f"summary {case}")
@@ -146,10 +149,10 @@ def run_summary(case, paths):
 
 def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             n_samples=1000, n_test=20, epochs=20, batch_size=32,
-            device="cpu", workers=None,
+            device="cpu", workers=None, random_seed=42,
             sample_solver="dense", test_solver="dense",
             uc_types=("tcuc", "topo", "scuc"),
-            models=("stgcn", "mlp"), *,
+            models=("stgcn_v2", "stgcn_v1", "mlp"), *,
             input_root="data", output_root=".", run_id: str,
             processed_path=None, process_chunk_size=200, train_ratio=0.8):
     """
@@ -163,6 +166,8 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
     for m in (sample_solver, test_solver):
         if m not in SOLVE_MODES:
             raise ValueError(f"Unknown solve mode: {m!r}, expected one of {SOLVE_MODES}")
+    for model_type in models:
+        canonical_model_type(model_type)
 
     paths = ExperimentPaths(
         input_root=input_root,
@@ -188,12 +193,12 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             failed = run_train(
                 case, uc_types, models, paths, processed_path,
                 generated_processed,
-                epochs, device, batch_size,
+                epochs, device, batch_size, random_seed,
             )
         elif stage == "test":
             failed = run_test(case, uc_types, models, paths, n_test, test_solver, device)
         elif stage == "summary":
-            failed = run_summary(case, paths)
+            failed = run_summary(case, paths, uc_types, models)
         else:
             print(f"Unknown stage: {stage}")
             continue

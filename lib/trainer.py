@@ -1,17 +1,29 @@
 import os
+import random
 import time
+from dataclasses import asdict, is_dataclass
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import Adam
 
-from lib.stgcn import STGCN
-from lib.mlp import MLP
 from lib.data_loader import load_processed_data, make_dataloader
 from lib.experiment import ExperimentPaths
+from lib.model_registry import (
+    MODEL_ALIASES,
+    MODEL_REGISTRY,
+    build_model,
+    canonical_model_type,
+    get_model_spec,
+    model_from_config,
+)
 
+
+# Compatibility view for code that imported the old class-only registry.
 MODEL_CLASSES = {
-    "stgcn": STGCN,
-    "mlp": MLP,
+    name: get_model_spec(name).model_class
+    for name in (*MODEL_REGISTRY.keys(), *MODEL_ALIASES.keys())
 }
 
 
@@ -24,7 +36,16 @@ def save_model(model, model_type: str, casename: str, uc_type: str,
                paths: ExperimentPaths):
     path = model_path(model_type, casename, uc_type, paths)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    torch.save({'config': model.config, 'state_dict': model.state_dict()}, path)
+    canonical = canonical_model_type(model_type)
+    spec = get_model_spec(canonical)
+    config = asdict(model.config) if is_dataclass(model.config) else model.config
+    torch.save({
+        'checkpoint_schema': 2,
+        'model_type': canonical,
+        'architecture_version': spec.architecture_version,
+        'config': config,
+        'state_dict': model.state_dict(),
+    }, path)
     print(f"[SAVED] {model_type} model -> {path}")
 
 
@@ -34,7 +55,26 @@ def load_model(model_type: str, casename: str, uc_type: str,
     if not os.path.exists(path):
         raise FileNotFoundError(f"Model file not found: {path}")
     checkpoint = torch.load(path, weights_only=False, map_location=device)
-    model = MODEL_CLASSES[model_type](checkpoint['config'])
+    requested_type = canonical_model_type(model_type)
+    checkpoint_type = checkpoint.get('model_type')
+    if checkpoint_type is not None:
+        checkpoint_type = canonical_model_type(checkpoint_type)
+        if checkpoint_type != requested_type:
+            raise ValueError(
+                f"Checkpoint model_type is {checkpoint_type!r}, "
+                f"not requested type {requested_type!r}"
+            )
+    schema = checkpoint.get('checkpoint_schema', 1)
+    if schema not in (1, 2):
+        raise ValueError(f"Unsupported checkpoint schema: {schema}")
+    checkpoint_version = checkpoint.get('architecture_version')
+    expected_version = get_model_spec(requested_type).architecture_version
+    if checkpoint_version is not None and checkpoint_version != expected_version:
+        raise ValueError(
+            f"Checkpoint architecture_version is {checkpoint_version!r}, "
+            f"not expected version {expected_version!r}"
+        )
+    model = model_from_config(requested_type, checkpoint['config'])
     model.load_state_dict(checkpoint['state_dict'])
     model.to(device)
     model.eval()
@@ -60,6 +100,14 @@ def _run_epoch(model, loader, criterion, optimizer=None, device="cpu") -> float:
     return total_loss / len(loader.dataset)
 
 
+def _set_model_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def train_model(
     model_type: str,
     casename: str,
@@ -75,8 +123,14 @@ def train_model(
     save_best: bool = True,
     n_hidden: int = 3,
     hidden_dim: int = 512,
+    random_seed: int = 42,
+    config_overrides: dict = None,
 ):
     dev = torch.device(device)
+
+    # Reset before model construction and before the shuffled loader is iterated,
+    # so model order in a comparison run does not affect initialization/shuffling.
+    _set_model_seed(random_seed)
 
     train_data, test_data = load_processed_data(
         processed_path, expected_sample_count=expected_sample_count
@@ -84,20 +138,17 @@ def train_model(
     train_loader = make_dataloader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = make_dataloader(test_data, batch_size=batch_size, shuffle=False)
 
-    if model_type == "stgcn":
-        model = STGCN(STGCN.default_config(train_data)).to(dev)
-    elif model_type == "mlp":
-        config = MLP.default_config(train_data)
-        config.n_hidden = n_hidden
-        config.hidden_dim = hidden_dim
-        model = MLP(config).to(dev)
-    else:
-        raise ValueError(f"Unknown model_type: {model_type!r}, expected 'stgcn' or 'mlp'")
+    overrides = dict(config_overrides or {})
+    if canonical_model_type(model_type) == "mlp":
+        overrides.setdefault("n_hidden", n_hidden)
+        overrides.setdefault("hidden_dim", hidden_dim)
+    model = build_model(model_type, train_data, overrides).to(dev)
+    spec = get_model_spec(model_type)
 
     optimizer = Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
 
-    if model_type == "stgcn":
+    if spec.prenorm_warmup:
         print("[PRENORM] warming up normalisation statistics ...")
         model.train()
         model.prenorm_update_on()
