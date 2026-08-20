@@ -21,5 +21,5 @@ if __name__ == "__main__":
         workers=None,
         input_root=V1_INPUT_ROOT,
         output_root=PROJECT_ROOT,
-        run_id="r003",
+        run_id="v1-benchmark",
     )
