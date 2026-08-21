@@ -1,6 +1,8 @@
 import os
 import time
 import traceback
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from lib.toolkit import setlog
 from lib.sampler import sample_dir, run_sampling
@@ -115,6 +117,84 @@ def run_train(case, uc_types, models, paths, configured_processed_path,
     return failed
 
 
+def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
+                         random_seed):
+    """Run one queue of training tasks sequentially in a spawned GPU process."""
+    failed = []
+    for uc, model, source, expected_count in tasks:
+        label = f"train {case}/{uc}/{model} on {device}"
+        ok = _run_task(label, lambda uc=uc, model=model, source=source,
+                       expected_count=expected_count: (
+            setlog(paths.log_path(case, "train", f"train_{uc}_{model}.log"),
+                   overwrite=True),
+            train_model(
+                model_type=model, casename=case, uc_type=uc, paths=paths,
+                epochs=epochs, device=device, batch_size=batch_size,
+                random_seed=random_seed, processed_path=source,
+                expected_sample_count=expected_count,
+            ),
+        ))
+        if not ok:
+            failed.append(f"train {case}/{uc}/{model}")
+    return failed
+
+
+def run_train_parallel(case, uc_types, models, paths,
+                       configured_processed_path, generated_processed,
+                       devices, epochs=20, batch_size=32, random_seed=42):
+    """Distribute training tasks over devices, with one process per device."""
+    devices = tuple(devices)
+    if not devices:
+        raise ValueError("train_devices must contain at least one device")
+    if len(set(devices)) != len(devices):
+        raise ValueError(f"train_devices contains duplicates: {devices}")
+
+    tasks = []
+    for uc in uc_types:
+        source = _processed_source(
+            paths, configured_processed_path, case, uc, generated_processed
+        )
+        _check_processed(source)
+        expected_count = _sample_count(case, uc, paths)
+        for model in models:
+            tasks.append((uc, model, source, expected_count))
+
+    queues = [[] for _ in devices]
+    for index, task in enumerate(tasks):
+        queues[index % len(devices)].append(task)
+
+    print("\n[train] parallel GPU assignment:")
+    for device, queue in zip(devices, queues):
+        labels = ", ".join(f"{uc}/{model}" for uc, model, _, _ in queue)
+        print(f"  {device}: {labels or '(idle)'}")
+
+    failed = []
+    # CUDA must not be initialized before a fork. Spawn gives every GPU worker
+    # a clean CUDA runtime, and each worker owns its device queue exclusively.
+    context = mp.get_context("spawn")
+    active = [(device, queue) for device, queue in zip(devices, queues) if queue]
+    with ProcessPoolExecutor(max_workers=len(active), mp_context=context) as pool:
+        futures = {
+            pool.submit(
+                _run_train_on_device, device, queue, case, paths, epochs,
+                batch_size, random_seed,
+            ): (device, queue)
+            for device, queue in active
+        }
+        for future in as_completed(futures):
+            device, queue = futures[future]
+            try:
+                failed.extend(future.result())
+            except Exception:
+                print(f"[train] worker for {device} FAILED")
+                traceback.print_exc()
+                failed.extend(
+                    f"train {case}/{uc}/{model}"
+                    for uc, model, _, _ in queue
+                )
+    return failed
+
+
 def run_test(case, uc_types, models, paths, n_test=20, mode="dense", device="cpu"):
     failed = []
     for uc in uc_types:
@@ -154,7 +234,8 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             uc_types=("tcuc", "topo", "scuc"),
             models=("stgcn_v2", "stgcn_v1", "mlp"), *,
             input_root="data", output_root=".", run_id: str,
-            processed_path=None, process_chunk_size=200, train_ratio=0.8):
+            processed_path=None, process_chunk_size=200, train_ratio=0.8,
+            train_devices=None):
     """
     sample_solver / test_solver: transmission-security formulation used when
     generating training labels and when testing, respectively. One of
@@ -190,11 +271,18 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
                 case, uc_types, paths, process_chunk_size, train_ratio,
             )
         elif stage == "train":
-            failed = run_train(
-                case, uc_types, models, paths, processed_path,
-                generated_processed,
-                epochs, device, batch_size, random_seed,
-            )
+            if train_devices is None:
+                failed = run_train(
+                    case, uc_types, models, paths, processed_path,
+                    generated_processed,
+                    epochs, device, batch_size, random_seed,
+                )
+            else:
+                failed = run_train_parallel(
+                    case, uc_types, models, paths, processed_path,
+                    generated_processed, train_devices,
+                    epochs, batch_size, random_seed,
+                )
         elif stage == "test":
             failed = run_test(case, uc_types, models, paths, n_test, test_solver, device)
         elif stage == "summary":

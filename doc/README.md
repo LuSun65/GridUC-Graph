@@ -115,6 +115,7 @@ if __name__ == "__main__":
 | `n_test` | 20 | Number of test cases |
 | `epochs` / `batch_size` | 20 / 32 | Training hyperparameters |
 | `device` | `cpu` | `cpu` / `cuda` / `mps` |
+| `train_devices` | none | Optional device list such as `("cuda:0", "cuda:1", "cuda:2", "cuda:3")`; training tasks are split across one spawned process per device |
 | `workers` | no parallelism | `"auto"` (all cores) or an integer (number of processes) — **effective only in the sample stage** |
 | `sample_solver` | `dense` | The mode used to solve for training labels in the sample stage |
 | `test_solver` | `dense` | The mode used in the test stage, for both ground truth and the accelerated solve |
@@ -137,7 +138,7 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 **process** — Raw samples → training tensors `.pt` below the current run. Chunk size is 200 by default and the train/test split is a sequential 0.8 cut. Omit this stage and set `processed_path` to reuse an existing V1 or earlier-run file.
 
-**train** — The best model by test loss is saved at `runs/<run_id>/<case>/checkpoints/<uc>/<model>.pt`, with checkpoint structure `{config, state_dict}`.
+**train** — The best model by test loss is saved at `runs/<run_id>/<case>/checkpoints/<uc>/<model>.pt`, with checkpoint structure `{config, state_dict}`. When `train_devices` is set, the `(uc_type, model)` tasks are assigned round-robin to those devices; each device has one process and runs its assigned queue sequentially.
 
 The two models differ in size by three orders of magnitude: on case6515 the MLP's first layer flattens the input into 682,320 dimensions fully connected to 512, for 3.6×10⁸ parameters (1.45GB); the STGCN shares weights over nodes and edges, for 7.5×10⁵ parameters (3.0MB).
 
