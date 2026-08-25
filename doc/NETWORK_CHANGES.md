@@ -177,7 +177,23 @@ The Fusion `ChebConvLayer` propagates information across the masked bus graph af
 
 ## 2. Completed Changes
 
-TBD
+### 2.1 STGCN V2.0 (`stgcn_v2`)
+
+V2.0 keeps the V1 input/output contract and the existing Static and Dynamic
+branches unchanged. The only structural change is in the Fusion branch, where
+`ChebConvLayer` is replaced by a masked multi-head `GraphAttentionLayer`:
+
+```text
+x_static [B, N, H] + x_dynamic [B, N, H]
+-> concat [B, N, 2 * H]
+-> masked multi-head GraphAttentionLayer [B, N, H]
+-> generator-bus selection and output MLPs
+-> logits [B, G, T]
+```
+
+Attention is normalized over each destination bus's active incoming edges using
+`edge_mask`. Each bus also has an always-active self-loop so that its own
+representation is retained and isolated buses remain valid.
 
 ## 3. Planned Changes
 
