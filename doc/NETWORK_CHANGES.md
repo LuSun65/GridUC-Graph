@@ -195,6 +195,28 @@ Attention is normalized over each destination bus's active incoming edges using
 `edge_mask`. Each bus also has an always-active self-loop so that its own
 representation is retained and isolated buses remain valid.
 
+### 2.2 STGCN V2.1 (`stgcn_v2.1`)
+
+V2.1 keeps the V1 input/output contract and Static branch unchanged, and retains
+the V2.0 attention-based Fusion branch. The Dynamic branch now also replaces the
+spatial `ChebConvLayer` in both `STConvBlock`s with masked multi-head
+`GraphAttentionLayer`s applied independently at each time step:
+
+```text
+node_feat_d [B, T, N, F_node_d]
+-> dynamic PreNormLayer
+-> two blocks of TemporalConv -> GraphAttentionLayer -> TemporalConv
+-> full-horizon temporal collapse and projection MLP
+-> x_dynamic [B, N, H]
+
+x_static [B, N, H] + x_dynamic [B, N, H]
+-> attention-based Fusion branch
+-> logits [B, G, T]
+```
+
+Both Dynamic and Fusion attention use `edge_mask` and always-active self-loops.
+The default configuration uses four attention heads.
+
 ## 3. Planned Changes
 
 ### 3.1 Graph Attention

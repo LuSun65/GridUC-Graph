@@ -13,6 +13,8 @@ from lib.model_registry import (
 )
 from lib.stgcn import STGCN, STGCNInput
 from lib.stgcn_v2 import STGCN_V2
+from lib.stgcn_v2_1 import STGCN_V2_1
+from lib.layers.module_dync_attention import AttentionDyncModule
 from lib.trainer import _set_model_seed, load_model, save_model
 
 
@@ -31,12 +33,19 @@ def _input() -> STGCNInput:
 class ModelRegistryTest(unittest.TestCase):
     def test_canonical_models_and_legacy_aliases_are_registered(self):
         self.assertEqual(
-            set(MODEL_REGISTRY), {"mlp", "stgcn_v1", "stgcn_v2"}
+            set(MODEL_REGISTRY),
+            {"mlp", "stgcn_v1", "stgcn_v2", "stgcn_v2.1"},
         )
         self.assertEqual(canonical_model_type("stgcn"), "stgcn_v1")
         self.assertEqual(canonical_model_type("stgcn-v2"), "stgcn_v2")
+        self.assertEqual(
+            canonical_model_type("stgcn-v2.1"), "stgcn_v2.1"
+        )
         self.assertIs(get_model_spec("stgcn").model_class, STGCN)
         self.assertIs(get_model_spec("stgcn-v2").model_class, STGCN_V2)
+        self.assertIs(
+            get_model_spec("stgcn-v2.1").model_class, STGCN_V2_1
+        )
 
     def test_every_model_obeys_the_common_output_contract(self):
         data = _input()
@@ -44,6 +53,7 @@ class ModelRegistryTest(unittest.TestCase):
             "mlp": {"hidden_dim": 8, "n_hidden": 1},
             "stgcn_v1": {"f_hidden": 8},
             "stgcn_v2": {"f_hidden": 8, "attention_heads": 2},
+            "stgcn_v2.1": {"f_hidden": 8, "attention_heads": 2},
         }
         for model_type in MODEL_REGISTRY:
             with self.subTest(model_type=model_type):
@@ -63,6 +73,14 @@ class ModelRegistryTest(unittest.TestCase):
                 ]
                 self.assertTrue(gradients)
                 self.assertTrue(all(torch.isfinite(grad).all() for grad in gradients))
+
+    def test_v2_1_uses_attention_dynamic_branch(self):
+        model = build_model("stgcn_v2.1", _input(), {
+            "f_hidden": 8,
+            "attention_heads": 2,
+        })
+        self.assertIsInstance(model, STGCN_V2_1)
+        self.assertIsInstance(model.dynamic_branch, AttentionDyncModule)
 
     def test_unknown_config_override_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "has no field"):
@@ -116,6 +134,31 @@ class ModelCheckpointTest(unittest.TestCase):
         loaded = load_model(
             "stgcn_v2", "case5", "tcuc", self.paths, device="cpu"
         )
+        for expected, actual in zip(
+            model.state_dict().values(), loaded.state_dict().values()
+        ):
+            self.assertTrue(torch.equal(expected, actual))
+
+    def test_v2_1_checkpoint_round_trip_uses_architecture_version(self):
+        model = build_model("stgcn_v2.1", _input(), {
+            "f_hidden": 8,
+            "attention_heads": 2,
+        })
+        save_model(model, "stgcn_v2.1", "case5", "tcuc", self.paths)
+
+        checkpoint_path = self.paths.checkpoint_path(
+            "case5", "tcuc", "stgcn_v2.1"
+        )
+        checkpoint = torch.load(
+            checkpoint_path, weights_only=False, map_location="cpu"
+        )
+        self.assertEqual(checkpoint["model_type"], "stgcn_v2.1")
+        self.assertEqual(checkpoint["architecture_version"], "2.1")
+
+        loaded = load_model(
+            "stgcn_v2.1", "case5", "tcuc", self.paths, device="cpu"
+        )
+        self.assertIsInstance(loaded, STGCN_V2_1)
         for expected, actual in zip(
             model.state_dict().values(), loaded.state_dict().values()
         ):
