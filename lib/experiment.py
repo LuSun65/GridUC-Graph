@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 import os
 
 
@@ -24,15 +25,23 @@ class ExperimentPaths:
     input_root: Path
     output_root: Path
     run_id: str
+    checkpoint_run_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input_root", Path(self.input_root))
         object.__setattr__(self, "output_root", Path(self.output_root))
         _validate_id("run_id", self.run_id)
+        if self.checkpoint_run_id is not None:
+            _validate_id("checkpoint_run_id", self.checkpoint_run_id)
 
     @property
     def run_root(self) -> Path:
         return self.output_root / "runs" / self.run_id
+
+    @property
+    def checkpoint_run_root(self) -> Path:
+        run_id = self.checkpoint_run_id or self.run_id
+        return self.output_root / "runs" / run_id
 
     def run_case_root(self, casename: str) -> Path:
         _validate_id("casename", casename)
@@ -61,6 +70,15 @@ class ExperimentPaths:
         _validate_id("uc_type", uc_type)
         _validate_id("model_type", model_type)
         return self.run_case_root(casename) / "checkpoints" / uc_type / f"{model_type}.pt"
+
+    def test_checkpoint_path(self, casename: str, uc_type: str,
+                             model_type: str) -> Path:
+        """Checkpoint selected for testing; defaults to the current run."""
+        _validate_id("casename", casename)
+        _validate_id("uc_type", uc_type)
+        _validate_id("model_type", model_type)
+        return (self.checkpoint_run_root / casename /
+                "checkpoints" / uc_type / f"{model_type}.pt")
 
     def result_path(self, casename: str, uc_type: str, model_type: str) -> Path:
         _validate_id("casename", casename)

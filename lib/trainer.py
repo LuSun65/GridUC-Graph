@@ -51,7 +51,7 @@ def save_model(model, model_type: str, casename: str, uc_type: str,
 
 def load_model(model_type: str, casename: str, uc_type: str,
                paths: ExperimentPaths, device: str = "cpu"):
-    path = model_path(model_type, casename, uc_type, paths)
+    path = paths.test_checkpoint_path(casename, uc_type, model_type)
     if not os.path.exists(path):
         raise FileNotFoundError(f"Model file not found: {path}")
     checkpoint = torch.load(path, weights_only=False, map_location=device)

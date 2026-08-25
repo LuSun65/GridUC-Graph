@@ -55,6 +55,26 @@ class ExperimentPathsTest(unittest.TestCase):
         )
         self.assertNotEqual(self.paths.run_root, other_run.run_root)
 
+    def test_checkpoint_path_defaults_to_current_run(self):
+        self.assertEqual(
+            self.paths.test_checkpoint_path(
+                "case118", "tcuc", "stgcn_v2"
+            ),
+            self.paths.checkpoint_path("case118", "tcuc", "stgcn_v2"),
+        )
+
+    def test_checkpoint_run_id_selects_another_run(self):
+        paths = ExperimentPaths(
+            input_root="/shared/v1/data",
+            output_root="/work/v2",
+            run_id="results-run",
+            checkpoint_run_id="training-run",
+        )
+        self.assertEqual(
+            paths.test_checkpoint_path("case118", "tcuc", "stgcn_v2"),
+            Path("/work/v2/runs/training-run/case118/checkpoints/tcuc/stgcn_v2.pt"),
+        )
+
     def test_ids_cannot_escape_output_namespace(self):
         for bad_id in ("", ".", "..", "nested/run", "nested\\run"):
             with self.subTest(bad_id=bad_id), self.assertRaises(ValueError):

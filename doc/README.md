@@ -127,6 +127,7 @@ if __name__ == "__main__":
 | `process_chunk_size` | `200` | Number of samples converted per processing chunk |
 | `train_ratio` | `0.8` | Sequential train/test split used when processing |
 | `processed_path` | none | Optional path template such as `/v1/data/{case}/processed/{uc}.pt`; used when the process stage is omitted |
+| `checkpoint_run_id` | none | Optional run ID from which the test stage loads checkpoints; when omitted, checkpoints are loaded from the current `run_id` |
 
 `stages` is the mechanism for resuming: if the models are already trained and you only want to re-evaluate, pass `stages=["test", "summary"]`.
 
@@ -142,7 +143,7 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 The two models differ in size by three orders of magnitude: on case6515 the MLP's first layer flattens the input into 682,320 dimensions fully connected to 512, for 3.6×10⁸ parameters (1.45GB); the STGCN shares weights over nodes and edges, for 7.5×10⁵ parameters (3.0MB).
 
-**test** — First generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Results are stored at `runs/<run_id>/<case>/results/<uc>/<model>.pkl`.
+**test** — First generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Set `checkpoint_run_id` to load checkpoints from `runs/<checkpoint_run_id>/<case>/checkpoints/<uc>/<model>.pt`. If it is omitted, testing loads checkpoints from the current `run_id` as before. Results are always stored below the current `run_id` at `runs/<run_id>/<case>/results/<uc>/<model>.pkl`.
 
 **summary** — Reprint the summary table from stored results, so format changes need no re-testing (`print_case_summary` in `lib/tester.py`).
 

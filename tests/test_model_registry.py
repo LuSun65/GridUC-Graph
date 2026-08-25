@@ -133,6 +133,27 @@ class ModelCheckpointTest(unittest.TestCase):
         loaded = load_model("stgcn", "case5", "tcuc", self.paths)
         self.assertIsInstance(loaded, STGCN)
 
+    def test_checkpoint_run_id_selects_checkpoint(self):
+        model = build_model("stgcn_v2", _input(), {
+            "f_hidden": 8,
+            "attention_heads": 2,
+        })
+        save_model(model, "stgcn_v2", "case5", "tcuc", self.paths)
+        selected_paths = ExperimentPaths(
+            self.paths.input_root,
+            self.paths.output_root,
+            "test-results",
+            checkpoint_run_id="comparison",
+        )
+
+        loaded = load_model(
+            "stgcn_v2", "case5", "tcuc", selected_paths,
+        )
+        for expected, actual in zip(
+            model.state_dict().values(), loaded.state_dict().values()
+        ):
+            self.assertTrue(torch.equal(expected, actual))
+
 
 if __name__ == "__main__":
     unittest.main()

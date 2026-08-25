@@ -7,7 +7,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from lib.toolkit import setlog
 from lib.sampler import sample_dir, run_sampling
 from lib.data_loader import process_data
-from lib.trainer import model_path, train_model
+from lib.trainer import train_model
 from lib.model_registry import canonical_model_type
 from lib.tester import generate_test_cases, run_testing, print_case_summary
 from lib.uc_model import SOLVE_MODES
@@ -45,7 +45,7 @@ def _sample_count(case, uc_type, paths):
 
 
 def _check_model(case, uc_type, model_type, paths):
-    p = model_path(model_type, case, uc_type, paths)
+    p = paths.test_checkpoint_path(case, uc_type, model_type)
     if not os.path.exists(p):
         raise FileNotFoundError(f"Model not found: {p}")
 
@@ -235,7 +235,7 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             models=("stgcn_v2", "stgcn_v1", "mlp"), *,
             input_root="data", output_root=".", run_id: str,
             processed_path=None, process_chunk_size=200, train_ratio=0.8,
-            train_devices=None):
+            train_devices=None, checkpoint_run_id=None):
     """
     sample_solver / test_solver: transmission-security formulation used when
     generating training labels and when testing, respectively. One of
@@ -254,9 +254,11 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
         input_root=input_root,
         output_root=output_root,
         run_id=run_id,
+        checkpoint_run_id=checkpoint_run_id,
     )
     print(f"[paths] input_root={paths.input_root}")
     print(f"[paths] run_root={paths.run_root}")
+    print(f"[paths] checkpoint_run_root={paths.checkpoint_run_root}")
     generated_processed = "process" in stages
 
     all_failed = []
