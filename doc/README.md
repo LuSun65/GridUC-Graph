@@ -181,13 +181,13 @@ Before a sample is written to disk, the dense PTDF matrices are stripped out (a 
 `print_case_summary` groups by uc_type, with one MILP baseline row plus one row per model in each group:
 
 ```
- UC       Method      Avg.cost($)  Avg.gap(%)   Gap STD  Avg.time(s)  Time STD   Speedup
- tcuc     MILP         16,536,102           -         -        13.41      2.15         -
-          MLP          16,708,010      1.0393    0.1974         2.84      0.76     4.73x
-          STGCN        16,544,085      0.0483    0.1674        10.19      3.51     1.32x
+ UC       Method      Avg.cost($)  Avg.gap(%)   Gap STD  Avg.time(s)  Time STD   Speedup  Threshold  Fix ratio(%)  Fix acc.(%)
+ tcuc     MILP         16,536,102           -         -        13.41      2.15         -          -             -            -
+          MLP          16,708,010      1.0393    0.1974         2.84      0.76     4.73x     0.9560         83.25        99.71
+          STGCN        16,544,085      0.0483    0.1674        10.19      3.51     1.32x     0.9715         71.80        99.94
 ```
 
-The per-sample details (including the threshold actually used for each sample, plus fix_ratio and fix_accuracy) live in the test stage logs, not in the summary table.
+`Threshold`, `Fix ratio(%)`, and `Fix acc.(%)` are averages over the test samples. A fallback sample whose threshold is `none` is excluded from the threshold average; its zero fix ratio is retained, while its undefined fix accuracy is excluded. The per-sample values remain available in the test stage logs.
 
 `Time STD` is worth watching: larger than the mean means the configuration is highly unstable across samples, which usually indicates that some samples degenerated into solving the original problem with nothing fixed.
 
