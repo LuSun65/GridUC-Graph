@@ -261,7 +261,8 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
 
     header = (f" {'UC':<8} {'Method':<8} {'Avg.cost($)':>14}"
               f" {'Avg.gap(%)':>11} {'Gap STD':>9}"
-              f" {'Avg.time(s)':>12} {'Time STD':>9} {'Speedup':>9}")
+              f" {'Avg.time(s)':>12} {'Time STD':>9} {'Speedup':>9}"
+              f" {'Threshold':>10} {'Fix ratio(%)':>13} {'Fix acc.(%)':>12}")
     w = len(header)
     sep = "-" * w
 
@@ -289,7 +290,8 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
 
         print(f" {uc:<8} {'MILP':<8} {np.mean(gt_objs):>14,.0f}"
               f" {'-':>11} {'-':>9}"
-              f" {milp_avg_time:>12.2f} {np.std(gt_times):>9.2f} {'-':>9}")
+              f" {milp_avg_time:>12.2f} {np.std(gt_times):>9.2f} {'-':>9}"
+              f" {'-':>10} {'-':>13} {'-':>12}")
 
         for m in models:
             if m not in all_res[uc]:
@@ -301,13 +303,26 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
             gaps = [c["obj_gap"] * 100 for c in cmp_list]
             times = [c["res_sol_time"] for c in cmp_list]
             objs = [c["res_obj"] for c in cmp_list]
+            thresholds = [c.get("threshold") for c in cmp_list
+                          if c.get("threshold") is not None]
+            fix_ratios = [c.get("fix_ratio") for c in cmp_list
+                          if c.get("fix_ratio") is not None]
+            fix_accuracies = [c.get("fix_accuracy") for c in cmp_list
+                              if c.get("fix_accuracy") is not None
+                              and np.isfinite(c.get("fix_accuracy"))]
 
             avg_time = np.mean(times)
             speedup = milp_avg_time / avg_time if avg_time > 0 else float("inf")
+            threshold_text = f"{np.mean(thresholds):.4f}" if thresholds else "-"
+            fix_ratio_text = f"{np.mean(fix_ratios) * 100:.2f}" if fix_ratios else "-"
+            fix_accuracy_text = (f"{np.mean(fix_accuracies) * 100:.2f}"
+                                 if fix_accuracies else "-")
 
             print(f" {'':8} {m.upper():<8} {np.mean(objs):>14,.0f}"
                   f" {np.mean(gaps):>11.4f} {np.std(gaps):>9.4f}"
-                  f" {avg_time:>12.2f} {np.std(times):>9.2f} {speedup:>8.2f}x")
+                  f" {avg_time:>12.2f} {np.std(times):>9.2f} {speedup:>8.2f}x"
+                  f" {threshold_text:>10} {fix_ratio_text:>13}"
+                  f" {fix_accuracy_text:>12}")
 
         print(sep)
 
