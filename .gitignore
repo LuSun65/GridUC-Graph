@@ -39,3 +39,5 @@ __MACOSX/
 
 # Local Codex skills
 skills/
+
+.vscode/
