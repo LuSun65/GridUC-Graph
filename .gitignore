@@ -6,6 +6,9 @@ report/
 # Generated run outputs
 /runs/
 
+# Local tests
+/tests/
+
 # Model/checkpoint and serialized data artifacts
 *.pt
 *.pth

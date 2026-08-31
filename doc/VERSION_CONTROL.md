@@ -90,6 +90,12 @@ test: add v1-v2 comparison workflow
 
 每个提交只处理一类问题。不要在同一个提交中同时进行目录重构、网络修改、特征修改和训练参数调整。
 
+### 3.4 本地测试与运行入口
+
+`tests/` 只用于本地验证，不纳入 Git 版本控制。`.gitignore` 必须保留对应规则；已经被 Git 跟踪的测试文件应仅从索引移除，不能因此删除本地副本。
+
+仓库根目录的 `run_case*.py` 继续由 Git 跟踪，但其中经常包含设备编号、运行阶段、样本数量和 `run_id` 等机器或单次实验相关参数。除非是在有意更新公共默认配置，否则不要提交这类本地调整。可复用的功能实现与实验约定应写入 `lib/` 和 `doc/` 中，运行入口中也不得保存凭据或其他敏感信息。
+
 ## 4. 模型源码隔离
 
 ### 4.1 保留 V1 接口
@@ -164,6 +170,8 @@ Git branch 和 worktree 已经标识源码基线，具体架构、数据和训�
             │   └── <uc>.pt
             ├── checkpoints/
             │   └── <uc>/<model>.pt
+            ├── benchmarks/
+            │   └── <uc>_<solver>_seed<seed>_n<count>.pkl
             ├── logs/
             │   └── <stage>/...
             └── results/
@@ -272,13 +280,11 @@ created_at
 
 ### 7.1 固定 benchmark
 
-当前测试场景会在每次运行时重新生成。为了保证跨版本结果可比，应生成带元数据的固定测试集：
+测试阶段使用带元数据的固定测试集，以保证同一 `run_id` 内不同模型以及跨次调用的结果可比。首次运行时生成并保存，后续调用只有在 case、UC 类型、solver 模式、随机种子、请求数量和 solver 配置全部匹配时才复用：
 
 ```text
-benchmarks/
-└── <case>/
-    └── <uc>/
-        └── suite_seed1000000_n20_<solver>.pkl
+<output_root>/runs/<run_id>/<case>/benchmarks/
+└── <uc>_<solver>_seed<seed>_n<count>.pkl
 ```
 
 测试集或其配套 manifest 应记录：
