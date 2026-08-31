@@ -217,82 +217,71 @@ x_static [B, N, H] + x_dynamic [B, N, H]
 Both Dynamic and Fusion attention use `edge_mask` and always-active self-loops.
 The default configuration uses four attention heads.
 
+### 2.3 STGCN V2.2 (`stgcn_v2.2`)
+
+V2.2 changes network depth. Current receptive-field baseline（for case 2383):
+
+| Model | Parameters (case2383 SCUC) |      Static encoder |                              Dynamic encoder |                Fusion layer | Max static-to-output spatial RF | Max dynamic-to-output spatial RF | Temporal RF before collapse |          Final temporal RF |
+| ----- | -------------------------: | ------------------: | -------------------------------------------: | --------------------------: | ------------------------------: | -------------------------------: | --------------------------: | -------------------------: |
+| V1    |                    751,169 |   2 NNConv = 2 hops |                    2 Cheb ST blocks = 4 hops | Cheb (`k_s = 3`) = 2 hops |                          4 hops |                           6 hops |                     9 steps | Full input horizon (`T`) |
+| V2.0  |                    734,913 |   2 NNConv = 2 hops |                    2 Cheb ST blocks = 4 hops |               1 GAT = 1 hop |                          3 hops |                           5 hops |                     9 steps | Full input horizon (`T`) |
+| V2.1  |                    718,785 |   2 NNConv = 2 hops |                     2 GAT ST blocks = 2 hops |               1 GAT = 1 hop |                          3 hops |                           3 hops |                     9 steps | Full input horizon (`T`) |
+| V2.2  |                  5,744,129 | 20 NNConv = 20 hops | 2 ST blocks, each with 5 ChebConv = 20 hops |            10 GAT = 10 hops |                         30 hops |                          30 hops |                     9 steps | `Full input horizon (T)` |
+
+Assumptions: Cheb `k_s = 3` = max 2 hops; NNConv/GAT = 1 hop per layer.
+Temporal RF: `1 + 2 * dynamic_st_blocks * (k_t - 1)`; current value = 9.
+
 ## 3. Planned Changes
 
-### 3.1 Graph Attention
+### 3.1 Node Features
 
-Graph attention can be introduced in the current STGCN architecture in two main places.
+The results in `runs/test/case2383/logs/test/test_scuc_stgcn_v2.log` show two
+distinct behaviors. For typical cases, the selected threshold is relatively
+low, many variables can be fixed, and prediction accuracy is below 100%. In a
+small number of cases, however, the threshold reaches 1, very few variables are
+fixed, and the reported accuracy is 100%.
 
-The first target is the Fusion branch. The current Fusion branch combines static and dynamic node embeddings, then applies one `ChebConvLayer`:
+One possible explanation is that these exceptional cases contain only one or
+two incorrectly predicted variables, and the model assigns very high confidence
+to those predictions. This suggests that each variable has a different level of
+importance to solving the SCUC problem. Fixing a less important variable
+incorrectly may not significantly affect the result. However, fixing a critical
+variable to the wrong value may make the entire problem infeasible. Therefore,
+critical variables should not be fixed.
 
-```text
-x_static [B, N, H] + x_dynamic [B, N, H]
--> concat [B, N, 2 * f_in]
--> ChebConvLayer [B, N, H]
--> generator-bus selection [B, G, H]
--> time expansion MLP [B, G, T * H]
--> reshape [B, G, T, H]
--> output MLP [B, G, T, 1]
--> squeeze [B, G, T]
-```
+This leads to two questions for further discussion: Which variables are critical,
+and how can they be excluded from variable fixing?
 
-This `ChebConvLayer` is the best initial replacement point:
+Possible approaches to excluding critical variables from variable fixing:
 
-```text
-x_static [B, N, H] + x_dynamic [B, N, H]
--> concat [B, N, 2 * f_in]
--> GraphAttentionLayer [B, N, H]
--> generator-bus selection [B, G, H]
--> time expansion MLP [B, G, T * H]
--> reshape [B, G, T, H]
--> output MLP [B, G, T, 1]
--> squeeze [B, G, T]
-```
+- Modify the training labels by setting the labels of critical variables to 0.5.
+- Add a regularization term to the loss function.
+- Modify the confidence calculation.
 
-Reasons:
+Possible ways to identify critical variables:
 
-- Fusion already has both static and dynamic information, so attention can learn which neighboring buses matter most for the final UC decision.
-- The change is localized to `FusionModule`, with limited impact on the rest of the model.
-- It is cheaper and lower-risk than applying attention inside every dynamic time step.
+- Use node features (physical information).
+- Train another neural network specifically for this task, potentially in
+  combination with multi-task learning.
+- Investigate whether critical variables correspond to particular operating
+  samples, such as specific load, maintenance, or contingency conditions.
 
-The second target is the Dynamic branch. Each `STConvBlock` currently follows:
+Two questions remain open:
 
-```text
-TemporalConv
--> ChebConvLayer
--> TemporalConv
--> LayerNorm
-```
+- How should a critical variable be defined?
+  - A variable whose incorrect fixing makes an otherwise feasible SCUC problem infeasible.
+  - Or variables whose incorrect fixing significantly degrades solution quality.
+- How can reliable labels for critical variables be generated?
+- Test the core hypothesis by progressively unfixing incorrectly fixed variables
+  in the exceptional samples. If too many variables must be unfixed, the instability
+  is more likely caused by a combination of variables.
 
-The middle `ChebConvLayer` could be replaced with a graph attention layer:
-
-```text
-TemporalConv
--> GraphAttentionLayer
--> TemporalConv
--> LayerNorm
-```
-
-This would let the model learn attention-based spatial message passing at each time step. However, the graph layer receives reshaped input `[B * T, N, f_out]` and produces `[B * T, N, H]`, so this option is more expensive, especially for large cases such as `case2383` and `case6515`.
-
-The Static branch is not the best first replacement target. It currently uses `NNConvLayer`, where `edge_attr` is passed through an edge MLP to generate per-edge weight matrices. This directly uses line reactance, flow limits, and SCUC contingency indicators. Replacing it with a standard graph attention layer could lose edge-feature conditioning unless the new attention layer is explicitly edge-aware.
-
-Suggested implementation order:
-
-1. Replace or add attention in the Fusion branch first.
-2. If Fusion attention improves performance, test attention inside the Dynamic branch `STConvBlock`.
-3. Modify the Static branch only if using an edge-aware graph attention design.
-
-### 3.2 Node Features
-
-TBD
-
-### 3.3 Multi-Task Learning
+### 3.2 Multi-Task Learning
 
 - Locational marginal price
 - Power output
 
-### 3.4 Topo & Scuc Together
+### 3.3 Topo & Scuc Together
 
 TBD
 
