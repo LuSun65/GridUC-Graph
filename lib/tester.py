@@ -1,6 +1,7 @@
 import os
 import time
 import traceback
+from dataclasses import asdict
 import numpy as np
 import torch
 
@@ -16,6 +17,7 @@ from lib.experiment import ExperimentPaths
 # Test scenarios live in their own seed range so they can never collide with the
 # training samples drawn at sampler.SEED_BASE + sid.
 TEST_SEED_BASE = 10 ** 6
+BENCHMARK_SCHEMA = 1
 
 
 def repair_pre_z_mintime(pre_z: np.ndarray, uc_data: UCData) -> np.ndarray:
@@ -185,32 +187,133 @@ def load_results(model_type: str, casename: str, uc_type: str,
     return load_pkl(path)
 
 
-def generate_test_cases(casename: str, uc_type: str, n_test: int,
-                        paths: ExperimentPaths,
-                        mode: str = "dense", config: UCConfig = None) -> list:
+def _generate_test_cases_with_seeds(
+    casename: str,
+    uc_type: str,
+    n_test: int,
+    paths: ExperimentPaths,
+    mode: str = "dense",
+    config: UCConfig = None,
+) -> tuple:
     """Draw fresh random scenarios and solve them to optimality as ground truth.
 
-    Regenerated on every test run rather than cached: the ground truth depends
-    on the security formulation used to solve it, and nothing about that
-    formulation is written to disk, so a cache could not be validated. Within a
-    run the same list is shared by every model, which is what makes the
-    per-model comparison meaningful.
+    The caller decides whether these fresh cases need to be persisted. Seeds of
+    successful solves are returned with the cases so a benchmark can record
+    exactly which requested scenarios were retained.
     """
     if config is None:
         config = UCConfig()
 
     case = load_case(casename, data_dir=paths.case_dir())
     test_cases = []
+    successful_seeds = []
     for i in range(n_test):
-        set_rnd_seed(TEST_SEED_BASE + i)
+        seed = TEST_SEED_BASE + i
+        set_rnd_seed(seed)
         uc_data, result = sample_uc(case, uc_type, config, mode=mode, attach_result=True)
         if not result.success:
             print(f"[gen] test case {i + 1}/{n_test} FAILED to solve, skipped")
             continue
         test_cases.append(uc_data)
+        successful_seeds.append(seed)
         print(f"[gen] test case {i + 1}/{n_test}  obj={uc_data.uc_obj:.2f}"
               f"  time={uc_data.uc_sol_time:.2f}s")
 
+    return test_cases, successful_seeds
+
+
+def generate_test_cases(casename: str, uc_type: str, n_test: int,
+                        paths: ExperimentPaths,
+                        mode: str = "dense", config: UCConfig = None) -> list:
+    """Generate fresh test cases without reading or writing a benchmark."""
+    test_cases, _ = _generate_test_cases_with_seeds(
+        casename, uc_type, n_test, paths, mode=mode, config=config
+    )
+    return test_cases
+
+
+def _validate_benchmark(payload: dict, path, casename: str, uc_type: str,
+                        n_test: int, mode: str, config: UCConfig) -> list:
+    expected = {
+        "benchmark_schema": BENCHMARK_SCHEMA,
+        "casename": casename,
+        "uc_type": uc_type,
+        "solver_mode": mode,
+        "solver_config": asdict(config),
+        "seed_base": TEST_SEED_BASE,
+        "requested_n_test": n_test,
+    }
+    if not isinstance(payload, dict):
+        raise ValueError(f"Invalid benchmark format: {path}")
+    for name, value in expected.items():
+        if payload.get(name) != value:
+            raise ValueError(
+                f"Benchmark metadata mismatch for {name!r} at {path}: "
+                f"expected {value!r}, found {payload.get(name)!r}"
+            )
+
+    test_cases = payload.get("test_cases")
+    successful_seeds = payload.get("successful_seeds")
+    if not isinstance(test_cases, list) or not isinstance(successful_seeds, list):
+        raise ValueError(f"Benchmark is missing test cases or seeds: {path}")
+    if len(test_cases) != len(successful_seeds):
+        raise ValueError(f"Benchmark case/seed count mismatch: {path}")
+    if payload.get("actual_n_test") != len(test_cases):
+        raise ValueError(f"Benchmark actual_n_test is inconsistent: {path}")
+    for index, case in enumerate(test_cases):
+        if (getattr(case, "uc_sol", None) is None
+                or getattr(case, "uc_obj", None) is None
+                or getattr(case, "uc_sol_time", None) is None):
+            raise ValueError(
+                f"Benchmark case {index} has incomplete ground truth: {path}"
+            )
+    return test_cases
+
+
+def load_or_generate_test_cases(
+    casename: str,
+    uc_type: str,
+    n_test: int,
+    paths: ExperimentPaths,
+    mode: str = "dense",
+    config: UCConfig = None,
+) -> list:
+    """Load a matching benchmark, or generate and atomically save one."""
+    if config is None:
+        config = UCConfig()
+    path = paths.benchmark_path(
+        casename, uc_type, mode, TEST_SEED_BASE, n_test
+    )
+    if path.exists():
+        test_cases = _validate_benchmark(
+            load_pkl(path), path, casename, uc_type, n_test, mode, config
+        )
+        print(f"[benchmark] loaded {len(test_cases)} test cases <- {path}")
+        return test_cases
+
+    test_cases, successful_seeds = _generate_test_cases_with_seeds(
+        casename, uc_type, n_test, paths, mode=mode, config=config
+    )
+    payload = {
+        "benchmark_schema": BENCHMARK_SCHEMA,
+        "casename": casename,
+        "uc_type": uc_type,
+        "solver_mode": mode,
+        "solver_config": asdict(config),
+        "seed_base": TEST_SEED_BASE,
+        "requested_n_test": n_test,
+        "successful_seeds": successful_seeds,
+        "actual_n_test": len(test_cases),
+        "test_cases": test_cases,
+    }
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        save_pkl(payload, temporary)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    print(f"[benchmark] saved {len(test_cases)} test cases -> {path}")
     return test_cases
 
 
@@ -259,9 +362,8 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
             except FileNotFoundError:
                 pass
 
-    header = (f" {'UC':<8} {'Method':<8} {'Avg.cost($)':>14}"
-              f" {'Avg.gap(%)':>11} {'Gap STD':>9}"
-              f" {'Avg.time(s)':>12} {'Time STD':>9} {'Speedup':>9}"
+    header = (f" {'UC':<8} {'Method':<12}"
+              f" {'Avg.gap(%)':>11} {'Gap STD':>9} {'Speedup':>9}"
               f" {'Threshold':>10} {'Fix ratio(%)':>13} {'Fix acc.(%)':>12}")
     w = len(header)
     sep = "-" * w
@@ -279,18 +381,15 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
             print(sep)
             continue
 
-        gt_objs = []
         gt_times = []
         for res in all_res[uc].values():
             for c in res["cmp_list"]:
-                gt_objs.append(c["gt_obj"])
                 gt_times.append(c["gt_sol_time"])
 
         milp_avg_time = np.mean(gt_times)
 
-        print(f" {uc:<8} {'MILP':<8} {np.mean(gt_objs):>14,.0f}"
-              f" {'-':>11} {'-':>9}"
-              f" {milp_avg_time:>12.2f} {np.std(gt_times):>9.2f} {'-':>9}"
+        print(f" {uc:<8} {'MILP':<12}"
+              f" {'-':>11} {'-':>9} {'-':>9}"
               f" {'-':>10} {'-':>13} {'-':>12}")
 
         for m in models:
@@ -302,7 +401,6 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
 
             gaps = [c["obj_gap"] * 100 for c in cmp_list]
             times = [c["res_sol_time"] for c in cmp_list]
-            objs = [c["res_obj"] for c in cmp_list]
             thresholds = [c.get("threshold") for c in cmp_list
                           if c.get("threshold") is not None]
             fix_ratios = [c.get("fix_ratio") for c in cmp_list
@@ -318,9 +416,9 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
             fix_accuracy_text = (f"{np.mean(fix_accuracies) * 100:.2f}"
                                  if fix_accuracies else "-")
 
-            print(f" {'':8} {m.upper():<8} {np.mean(objs):>14,.0f}"
+            print(f" {'':8} {m.upper():<12}"
                   f" {np.mean(gaps):>11.4f} {np.std(gaps):>9.4f}"
-                  f" {avg_time:>12.2f} {np.std(times):>9.2f} {speedup:>8.2f}x"
+                  f" {speedup:>8.2f}x"
                   f" {threshold_text:>10} {fix_ratio_text:>13}"
                   f" {fix_accuracy_text:>12}")
 

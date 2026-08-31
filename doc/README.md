@@ -143,7 +143,7 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 The two models differ in size by three orders of magnitude: on case6515 the MLP's first layer flattens the input into 682,320 dimensions fully connected to 512, for 3.6×10⁸ parameters (1.45GB); the STGCN shares weights over nodes and edges, for 7.5×10⁵ parameters (3.0MB).
 
-**test** — First generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Set `checkpoint_run_id` to load checkpoints from `runs/<checkpoint_run_id>/<case>/checkpoints/<uc>/<model>.pt`. If it is omitted, testing loads checkpoints from the current `run_id` as before. Results are always stored below the current `run_id` at `runs/<run_id>/<case>/results/<uc>/<model>.pkl`.
+**test** — Load or generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Generated cases, including their ground truth, are saved below `runs/<run_id>/<case>/benchmarks/` and reused by later test runs when the UC type, solver mode, seed, requested count, and solver configuration match. Set `checkpoint_run_id` to load checkpoints from `runs/<checkpoint_run_id>/<case>/checkpoints/<uc>/<model>.pt`. If it is omitted, testing loads checkpoints from the current `run_id` as before. Results are always stored below the current `run_id` at `runs/<run_id>/<case>/results/<uc>/<model>.pkl`.
 
 **summary** — Reprint the summary table from stored results, so format changes need no re-testing (`print_case_summary` in `lib/tester.py`).
 
@@ -159,7 +159,7 @@ The default Gurobi parameters are defined by `UCConfig` in `lib/uc_model.py` and
 
 ### Test case generation
 
-Test cases are **not cached**: seeds increment from `TEST_SEED_BASE` and every test stage re-solves them on the spot. The reason is that the ground truth depends on the security formulation used, and that information is not persisted, so a cache could not be validated. Within a single run all models share the same set of cases — that is the precondition for model-to-model comparison to mean anything.
+Test cases are cached as validated benchmark files. Seeds increment from `TEST_SEED_BASE`; the complete `UCData`, ground-truth solution, objective, solve time, successful seed list, security formulation, and solver configuration are persisted. A later test with matching metadata loads the benchmark and skips generation. Within a run all models therefore share exactly the same cases and ground truth, even when tested in separate invocations.
 
 If a case fails to solve within the time limit during generation, `FAILED to solve, skipped` is printed and it is skipped, so the actual number of test cases for that uc_type will be lower than `n_test`.
 
@@ -181,15 +181,13 @@ Before a sample is written to disk, the dense PTDF matrices are stripped out (a 
 `print_case_summary` groups by uc_type, with one MILP baseline row plus one row per model in each group:
 
 ```
- UC       Method      Avg.cost($)  Avg.gap(%)   Gap STD  Avg.time(s)  Time STD   Speedup  Threshold  Fix ratio(%)  Fix acc.(%)
- tcuc     MILP         16,536,102           -         -        13.41      2.15         -          -             -            -
-          MLP          16,708,010      1.0393    0.1974         2.84      0.76     4.73x     0.9560         83.25        99.71
-          STGCN        16,544,085      0.0483    0.1674        10.19      3.51     1.32x     0.9715         71.80        99.94
+ UC       Method      Avg.gap(%)   Gap STD   Speedup  Threshold  Fix ratio(%)  Fix acc.(%)
+ tcuc     MILP                 -         -         -          -             -            -
+          MLP             1.0393    0.1974     4.73x     0.9560         83.25        99.71
+          STGCN           0.0483    0.1674     1.32x     0.9715         71.80        99.94
 ```
 
 `Threshold`, `Fix ratio(%)`, and `Fix acc.(%)` are averages over the test samples. A fallback sample whose threshold is `none` is excluded from the threshold average; its zero fix ratio is retained, while its undefined fix accuracy is excluded. The per-sample values remain available in the test stage logs.
-
-`Time STD` is worth watching: larger than the mean means the configuration is highly unstable across samples, which usually indicates that some samples degenerated into solving the original problem with nothing fixed.
 
 ## Logs
 
@@ -221,6 +219,7 @@ Inputs and generated artifacts have separate roots. `input_root` may point at th
 └── <case>/
     ├── processed/<uc>.pt          # only when this run processes data
     ├── checkpoints/<uc>/<model>.pt
+    ├── benchmarks/<uc>_<solver>_seed<seed>_n<count>.pkl
     ├── logs/<stage>/...
     └── results/<uc>/<model>.pkl
 ```

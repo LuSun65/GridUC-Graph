@@ -9,7 +9,11 @@ from lib.sampler import sample_dir, run_sampling
 from lib.data_loader import process_data
 from lib.trainer import train_model
 from lib.model_registry import canonical_model_type
-from lib.tester import generate_test_cases, run_testing, print_case_summary
+from lib.tester import (
+    load_or_generate_test_cases,
+    run_testing,
+    print_case_summary,
+)
 from lib.uc_model import SOLVE_MODES
 from lib.experiment import ExperimentPaths
 
@@ -200,7 +204,9 @@ def run_test(case, uc_types, models, paths, n_test=20, mode="dense", device="cpu
     for uc in uc_types:
         setlog(paths.log_path(case, "test", f"gen_{uc}.log"), overwrite=True)
         print(f"\n[gen] generating {n_test} test cases for {case}/{uc}")
-        test_cases = generate_test_cases(case, uc, n_test, paths, mode=mode)
+        test_cases = load_or_generate_test_cases(
+            case, uc, n_test, paths, mode=mode
+        )
         for m in models:
             _check_model(case, uc, m, paths)
             ok = _run_task(f"test {case}/{uc}/{m}", lambda uc=uc, m=m: (

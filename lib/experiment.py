@@ -86,6 +86,18 @@ class ExperimentPaths:
         _validate_id("model_type", model_type)
         return self.run_case_root(casename) / "results" / uc_type / f"{model_type}.pkl"
 
+    def benchmark_path(self, casename: str, uc_type: str, solver_mode: str,
+                       seed_base: int, n_test: int) -> Path:
+        _validate_id("casename", casename)
+        _validate_id("uc_type", uc_type)
+        _validate_id("solver_mode", solver_mode)
+        if seed_base < 0:
+            raise ValueError("seed_base must be non-negative")
+        if n_test < 1:
+            raise ValueError("n_test must be positive")
+        filename = f"{uc_type}_{solver_mode}_seed{seed_base}_n{n_test}.pkl"
+        return self.run_case_root(casename) / "benchmarks" / filename
+
     def log_path(self, casename: str, *parts: str) -> Path:
         _validate_id("casename", casename)
         for part in parts:
