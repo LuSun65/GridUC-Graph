@@ -100,6 +100,16 @@ def _run_epoch(model, loader, criterion, optimizer=None, device="cpu") -> float:
     return total_loss / len(loader.dataset)
 
 
+def _run_prenorm_warmup(model, loader, device="cpu") -> None:
+    """Collect full-loader PreNorm statistics without training the model."""
+    model.eval()
+    model.prenorm_update_on()
+    with torch.no_grad():
+        for batch in loader:
+            model(batch.to(device))
+    model.prenorm_update_off()
+
+
 def _set_model_seed(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -145,16 +155,13 @@ def train_model(
     model = build_model(model_type, train_data, overrides).to(dev)
     spec = get_model_spec(model_type)
 
+    if spec.prenorm_warmup:
+        print("[PRENORM] collecting normalisation statistics ...")
+        _run_prenorm_warmup(model, train_loader, dev)
+        print("[PRENORM] statistics frozen")
+
     optimizer = Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
-
-    if spec.prenorm_warmup:
-        print("[PRENORM] warming up normalisation statistics ...")
-        model.train()
-        model.prenorm_update_on()
-        warmup_loss = _run_epoch(model, train_loader, criterion, optimizer, dev)
-        model.prenorm_update_off()
-        print(f"[PRENORM] done  warmup_loss={warmup_loss:.4f}")
 
     print(f"\n[TRAIN] {model_type} | {casename} / {uc_type}  epochs={epochs}  batch={batch_size}  lr={lr}")
 
