@@ -7,6 +7,7 @@ from lib.mlp import MLP, MLPConfig
 from lib.stgcn import STGCN, STGCNConfig, STGCNInput
 from lib.stgcn_v2 import STGCN_V2, STGCNV2Config
 from lib.stgcn_v2_1 import STGCN_V2_1, STGCNV21Config
+from lib.stgcn_v2_2 import STGCN_V2_2, STGCNV22Config
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,9 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "stgcn_v2.1": ModelSpec(
         STGCN_V2_1, STGCNV21Config, "2.1", prenorm_warmup=True
     ),
+    "stgcn_v2.2": ModelSpec(
+        STGCN_V2_2, STGCNV22Config, "2.2", prenorm_warmup=True
+    ),
 }
 
 # Old experiment names remain readable, but new runs should use canonical names.
@@ -31,6 +35,7 @@ MODEL_ALIASES = {
     "stgcn": "stgcn_v1",
     "stgcn-v2": "stgcn_v2",
     "stgcn-v2.1": "stgcn_v2.1",
+    "stgcn-v2.2": "stgcn_v2.2",
 }
 
 
