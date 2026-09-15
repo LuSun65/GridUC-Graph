@@ -221,15 +221,66 @@ The default configuration uses four attention heads.
 
 V2.2 changes network depth. Current receptive-field baseline（for case 2383):
 
-| Model | Parameters (case2383 SCUC) |      Static encoder |                              Dynamic encoder |                Fusion layer | Max static-to-output spatial RF | Max dynamic-to-output spatial RF | Temporal RF before collapse |          Final temporal RF |
-| ----- | -------------------------: | ------------------: | -------------------------------------------: | --------------------------: | ------------------------------: | -------------------------------: | --------------------------: | -------------------------: |
-| V1    |                    751,169 |   2 NNConv = 2 hops |                    2 Cheb ST blocks = 4 hops | Cheb (`k_s = 3`) = 2 hops |                          4 hops |                           6 hops |                     9 steps | Full input horizon (`T`) |
-| V2.0  |                    734,913 |   2 NNConv = 2 hops |                    2 Cheb ST blocks = 4 hops |               1 GAT = 1 hop |                          3 hops |                           5 hops |                     9 steps | Full input horizon (`T`) |
-| V2.1  |                    718,785 |   2 NNConv = 2 hops |                     2 GAT ST blocks = 2 hops |               1 GAT = 1 hop |                          3 hops |                           3 hops |                     9 steps | Full input horizon (`T`) |
-| V2.2  |                  5,744,129 | 20 NNConv = 20 hops | 2 ST blocks, each with 5 ChebConv = 20 hops |            10 GAT = 10 hops |                         30 hops |                          30 hops |                     9 steps | `Full input horizon (T)` |
+| Model | Parameters (case2383 SCUC) |    Static encoder |                             Dynamic encoder |                Fusion layer | Max static-to-output spatial RF | Max dynamic-to-output spatial RF | Temporal RF before collapse |          Final temporal RF |
+| ----- | -------------------------: | ----------------: | ------------------------------------------: | --------------------------: | ------------------------------: | -------------------------------: | --------------------------: | -------------------------: |
+| V1    |                    751,169 | 2 NNConv = 2 hops |                   2 Cheb ST blocks = 4 hops | Cheb (`k_s = 3`) = 2 hops |                          4 hops |                           6 hops |                     9 steps | Full input horizon (`T`) |
+| V2.0  |                    734,913 | 2 NNConv = 2 hops |                   2 Cheb ST blocks = 4 hops |               1 GAT = 1 hop |                          3 hops |                           5 hops |                     9 steps | Full input horizon (`T`) |
+| V2.1  |                    718,785 | 2 NNConv = 2 hops |                    2 GAT ST blocks = 2 hops |               1 GAT = 1 hop |                          3 hops |                           3 hops |                     9 steps | Full input horizon (`T`) |
+| V2.2  |                  1,846,529 | 6 NNConv = 6 hops | 2 ST blocks, each with 2 ChebConv = 8 hops |             2 GAT = 2 hops |                          8 hops |                          10 hops |                     9 steps | `Full input horizon (T)` |
 
 Assumptions: Cheb `k_s = 3` = max 2 hops; NNConv/GAT = 1 hop per layer.
 Temporal RF: `1 + 2 * dynamic_st_blocks * (k_t - 1)`; current value = 9.
+
+V2.2 also includes the following stability changes:
+
+1. PRENORM is an independent calibration process with no gradients or parameter
+   updates. When calibration uses the full training set, `PreNormLayer`
+   accumulates the mean and variance instead of overwriting them after each
+   batch.
+2. NNConv, ChebConv, and GAT use normalized residual blocks, such as
+   `x = LayerNorm(x + alpha * GraphConv(x))`. The residual branch uses a linear
+   projection when the input and output dimensions differ.
+3. NNConv uses a degree-normalized sum or mean for neighbor aggregation to limit
+   layer-by-layer growth in activation magnitude.
+
+### 2.4 Multi-Task Learning
+
+#### 2.4.1 Generating Local Marginal Price Labels
+
+`lib/lmp_sover.py` fixes the sample's commitment, startup, and shutdown states and solves a dense LP
+with Gurobi, supporting samples generated with either dense or lazy constraints.
+`fixed_commitment_lp_v1` assumes all units are initially off, no balance slack, tolerances of
+`1e-8`, and only accepts `OPTIMAL`; the same solve produces dispatch and short-term LMP:
+
+`LMP = balance dual + PTDFᵀ × sum of line upper/lower-bound duals + contingency term`
+
+Non-SCUC models omit the last term. The formula requires finite-difference validation;
+changes to these conventions require a rule-version update.
+
+#### 2.4.2 Adding Labels to Existing Samples
+
+`label_pricing.py` calls `lib/label_pricing.py` to add:
+
+| Field                                    | Content                                                  |
+| ---------------------------------------- | -------------------------------------------------------- |
+| `lmp_target`                           | `[N,T]`, currency/MWh                                  |
+| `p_target`                             | `[G,T]` unrounded dispatch, MW                         |
+| `pricing_obj` / `pricing_solve_time` | LP objective (including fixed costs) / runtime (seconds) |
+| `pricing_metadata`                     | `pricing_rule`, `uc_sol_sha256`, `uc_type`         |
+
+Run in the `lu_uc` environment; the case and UC type are inferred from the path:
+
+```bash
+python label_pricing.py --sample-dir ../GridUC-Graph/data/case5/samples/tcuc
+```
+
+By default, all samples are processed and valid labels are skipped; `--sample-id 1` selects one
+sample, and `--overwrite` forces recomputation. Validated results are saved atomically, preserving
+the original scenario; the hash covers only the commitment matrix. Failures leave the original
+file intact and processing continues; failed matrix inversion does not fall back to a pseudoinverse.
+The console and logs under `runs/lmp_labels/casexx/` record status, runtime, and the failure list
+without tracebacks; any failure results in a nonzero exit code. Integration with new-sample
+generation and training data remains pending.
 
 ## 3. Planned Changes
 
@@ -276,10 +327,75 @@ Two questions remain open:
   in the exceptional samples. If too many variables must be unfixed, the instability
   is more likely caused by a combination of variables.
 
-### 3.2 Multi-Task Learning
+### 3.2 多任务学习
 
-- Locational marginal price
-- Power output
+第一个辅助任务将是**节点边际电价（LMP）**预测。
+标签不能直接从原始 UC 求解中读取：UC 是一个 MILP，
+包含整数变量的模型所给出的对偶值不能作为有效的市场价格。
+因此，这里采用的初始定义是：将样本中的最优开停机决策固定后，
+通过连续经济调度定价求解得到的短期 LMP。它表示在保持开停机决策不变的情况下，
+某个母线在某个时段额外供应 1 MW 负荷的边际成本；它并不是允许开停机决策本身
+发生变化时，通过有限差分计算得到的边际成本。
+
+#### 3.2.1 处理后的数据与模型接口约定
+
+扩展 `STGCNInput`、`concat_stgcn_inputs`、`STGCNDataset`、collate 函数
+以及处理后数据的验证逻辑，加入：
+
+- `lmp_target [B, N, T]` 及可选的有效性掩码；
+- `p_target [B, G, T]` 及可选的有效性掩码。
+
+提升处理后数据/检查点的数据模式版本，并且仅在显式单任务模式下允许读取旧的
+仅含 UC 的处理后数据文件。所有目标归一化统计量都只能根据训练集计算，并保存
+在检查点/清单文件中。在样本 pickle 中保留原始 LMP 值。由于拥塞或供给稀缺时
+LMP 可能呈现重尾分布，首先采用基于训练集的稳健截断加标准化，并以物理单位
+再次报告指标；不要根据测试集计算截断阈值。
+
+网络应保留共享的静态/动态编码器，并提供独立的任务头：
+
+```text
+共享母线表示 [B, N, H]
+|- UC 任务头       -> uc_logits [B, G, T]
+|- LMP 任务头      -> lmp_pred  [B, N, T]
+`- 发电出力任务头  -> p_pred    [B, G, T]   （首次实验中可选）
+```
+
+使用结构化输出对象，而不是改变当前单一输出张量的含义。LMP 任务头必须保持
+母线级别；使用 `gen_bus` 进行选择会错误地丢弃没有发电机的母线上的电价。
+UC 和发电出力任务头可以通过 `gen_bus` 将共享母线表示映射到发电机。
+
+使用如下加权损失进行训练：
+
+```text
+L = L_uc_BCE + lambda_lmp * L_lmp_Huber
+                 + lambda_p * L_power_Huber
+```
+
+其中，回归损失使用归一化后的目标和掩码计算。分别记录各项原始损失、加权贡献
+以及共享编码器的梯度尺度；否则，表面上改善的总损失可能掩盖主要 UC 任务的
+性能下降。先仅使用 UC+LMP，在验证数据上调整 `lambda_lmp`，并将添加发电出力
+任务头作为一项独立的消融实验。
+
+#### 3.2.2 验证与逐步实施
+
+在生成全部标签之前，使用一个小规模算例和固定的样本子集检查：
+
+- 定价 LP 的状态为 `OPTIMAL`，且调度出力满足功率平衡、发电机、
+  爬坡、基态潮流和预想故障潮流约束；
+- LMP 的形状严格为 `[N, T]`，发电出力的形状严格为 `[G, T]`，所有值均为有限值，
+  且单位一致；
+- 无拥塞时段所有母线的 LMP 在容差范围内相同；
+- 对于选定的 `(母线, 时段)` 对，在保持相同开停机决策的情况下，将负荷增加
+  一个很小的 `epsilon`，定价目标函数值的变化约为
+  `LMP[bus,period] * epsilon`（在远离基发生变化的位置使用单侧测试）；
+- 连续两次补充标签具有幂等性，写入中断不会损坏样本，
+  且数据处理保留样本数量和原始划分；
+- 短程过拟合测试能够同时降低 UC 和 LMP 损失，随后使用 UC 准确率/变量固定指标
+  以及 LMP MAE/RMSE，对仅使用 UC 与使用 UC+LMP 进行比较。
+
+按以下顺序逐步实施：定价/单元测试、case5 标签补充与训练冒烟测试、
+一个较大算例的样本子集，然后是全部已有数据集。如果定价规则或有限差分验证
+发生变化，应停止批量生成，而不是静默接受标签。
 
 ### 3.3 Topo & Scuc Together
 
