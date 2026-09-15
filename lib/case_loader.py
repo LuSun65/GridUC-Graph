@@ -72,6 +72,12 @@ class UCData:
     # ground-truth objective / solve time, attached when sampling test cases
     uc_obj: Optional[float] = None
     uc_sol_time: Optional[float] = None
+    # Fixed-commitment pricing labels; old samples remain readable without them.
+    lmp_target: Optional[np.ndarray] = None  # [num_bus, num_period], currency/MWh
+    p_target: Optional[np.ndarray] = None    # [num_gen, num_period], MW
+    pricing_obj: Optional[float] = None
+    pricing_solve_time: Optional[float] = None
+    pricing_metadata: Optional[dict] = None
 
 
 def load_case(case_name: str, data_dir: str = "data/case") -> UCData:

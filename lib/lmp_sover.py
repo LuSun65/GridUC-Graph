@@ -1,6 +1,7 @@
 """Continuous pricing solve for a fixed unit-commitment schedule."""
 
 from dataclasses import dataclass
+import hashlib
 
 import gurobipy as gp
 import numpy as np
@@ -12,6 +13,16 @@ from lib.uc_model import UCModel, build_uc
 
 PRICING_FEASIBILITY_TOL = 1e-8
 PRICING_OPTIMALITY_TOL = 1e-8
+# Contract: dense fixed-commitment Gurobi LP, initially all off, no balance
+# slack, OPTIMAL only, tolerances above, power in MW and LMP in currency/MWh.
+# Bump this version whenever these pricing conventions change.
+PRICING_RULE = "fixed_commitment_lp_v1"
+
+
+def commitment_hash(commitment: np.ndarray) -> str:
+    """Hash binary commitments independently of their original numpy dtype."""
+    values = np.ascontiguousarray(np.rint(commitment), dtype=np.uint8)
+    return hashlib.sha256(str(values.shape).encode() + values.tobytes()).hexdigest()
 
 
 class PricingSolveError(RuntimeError):
@@ -26,6 +37,7 @@ class PricingResult:
     lmp_target: np.ndarray
     obj: float
     solve_time: float
+    metadata: dict
 
 
 def _validate_uc_solution(data: UCData, uc_sol: np.ndarray, uc_type: str) -> np.ndarray:
@@ -210,6 +222,11 @@ def solve_pricing(data: UCData, uc_sol: np.ndarray, uc_type: str) -> PricingResu
             lmp_target=lmp_target,
             obj=float(pricing_lp.ObjVal),
             solve_time=float(pricing_lp.Runtime),
+            metadata={
+                "pricing_rule": PRICING_RULE,
+                "uc_sol_sha256": commitment_hash(commitment),
+                "uc_type": uc_type,
+            },
         )
     finally:
         _dispose_pricing_models(uc, pricing_lp)
