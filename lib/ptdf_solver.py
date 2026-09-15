@@ -27,8 +27,8 @@ def compute_ptdf(data: UCData, ref_bus: int = 0) -> np.ndarray:
     bn_red = (a @ bl @ a.T)[np.ix_(idx, idx)]
     try:
         inv_bn_red = np.linalg.inv(bn_red)
-    except np.linalg.LinAlgError:
-        inv_bn_red = np.linalg.pinv(bn_red)
+    except np.linalg.LinAlgError as error:
+        raise np.linalg.LinAlgError("Base PTDF matrix inversion failed") from error
 
     inv_bn_full = np.zeros((num_bus, num_bus))
     inv_bn_full[np.ix_(idx, idx)] = inv_bn_red
@@ -78,8 +78,10 @@ def compute_post_ptdf(
     bn_red = (a @ bl @ a.T)[np.ix_(idx, idx)]
     try:
         inv_bn_red = np.linalg.inv(bn_red)
-    except np.linalg.LinAlgError:
-        inv_bn_red = np.linalg.pinv(bn_red)
+    except np.linalg.LinAlgError as error:
+        raise np.linalg.LinAlgError(
+            f"Post-contingency PTDF matrix inversion failed (outage_line={outage_line})"
+        ) from error
 
     inv_bn_full = np.zeros((num_bus, num_bus))
     inv_bn_full[np.ix_(idx, idx)] = inv_bn_red
