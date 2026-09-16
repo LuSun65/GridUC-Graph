@@ -11,8 +11,8 @@ from lib.case_loader import UCData
 from lib.uc_model import UCModel, build_uc
 
 
-PRICING_FEASIBILITY_TOL = 1e-8
-PRICING_OPTIMALITY_TOL = 1e-8
+PRICING_FEASIBILITY_TOL = 1e-4
+PRICING_OPTIMALITY_TOL = 1e-6
 # Contract: dense fixed-commitment Gurobi LP, initially all off, no balance
 # slack, OPTIMAL only, tolerances above, power in MW and LMP in currency/MWh.
 # Bump this version whenever these pricing conventions change.

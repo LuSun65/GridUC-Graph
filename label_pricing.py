@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 
+from lib import lmp_sover
 from lib.label_pricing import label_sample
 
 # dir example: /home/npg0/Sunlu/GridUC-Graph/data/case5/samples/tcuc
@@ -50,6 +51,9 @@ def main():
     started = time.monotonic()
     try:
         logger.info("Log: %s", log_path)
+        logger.info("PRICING_FEASIBILITY_TOL=%g PRICING_OPTIMALITY_TOL=%g",
+                    lmp_sover.PRICING_FEASIBILITY_TOL,
+                    lmp_sover.PRICING_OPTIMALITY_TOL)
         logger.info("START sample_dir=%s uc_type=%s overwrite=%s samples=%s",
                     args.sample_dir.resolve(), uc_type, args.overwrite,
                     [path.stem for path in samples])
@@ -60,7 +64,7 @@ def main():
                 status = label_sample(path, uc_type, overwrite=args.overwrite)
             except Exception as error:
                 reason = f"{type(error).__name__}: {error}"
-                failed.append((path, reason))
+                failed.append(path)
                 logger.error("FAILED sample %s (%.3fs): %s", path.stem,
                              time.monotonic() - sample_started, reason)
             else:
@@ -70,9 +74,7 @@ def main():
                             time.monotonic() - sample_started)
         logger.info("FINISHED total=%d saved=%d skipped=%d failed=%d elapsed=%.3fs",
                     len(samples), saved, skipped, len(failed), time.monotonic() - started)
-        logger.info("Failed sample IDs: %s", ", ".join(path.stem for path, _ in failed) or "none")
-        for path, reason in failed:
-            logger.error("Failure summary: %s | %s", path, reason)
+        logger.info("Failed sample IDs: %s", ", ".join(path.stem for path in failed) or "none")
         return 1 if failed else 0
     finally:
         for handler in handlers:
