@@ -1,4 +1,4 @@
-"""Label all numbered samples by default; use --sample-id to select one."""
+"""Label numbered samples in a directory or a single file via --sample-path."""
 
 import argparse
 from datetime import datetime
@@ -10,32 +10,53 @@ from pathlib import Path
 
 from lib import lmp_sover
 from lib.label_pricing import label_sample
+from lib.toolkit import load_pkl
 
 # dir example: /home/npg0/Sunlu/GridUC-Graph/data/case5/samples/tcuc
+# command example: python label_pricing.py --sample-path /home/npg0/Sunlu/GridUC-Graph-v2/samples/fail.pkl --overwrite
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample-dir", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--sample-dir", type=Path)
+    source.add_argument("--sample-path", type=Path, help="Single .pkl file; infer case and UC type from its contents")
     parser.add_argument("--sample-id", type=int, help="Process only this sample ID; defaults to all samples")
     parser.add_argument("--overwrite", action="store_true", help="Regenerate valid labels too")
     args = parser.parse_args()
-    args.sample_dir = args.sample_dir.resolve()
-    uc_type = args.sample_dir.name
-    if uc_type not in ("tcuc", "topo", "scuc"):
-        parser.error("Sample directory must end in tcuc, topo, or scuc (e.g. case5/samples/tcuc)")
-    case_name = next(
-        (part for part in reversed(args.sample_dir.parent.parts)
-         if re.fullmatch(r"case[0-9]+", part)), None,
-    )
-    if case_name is None:
-        parser.error("Sample path must contain a case directory such as case5 or case118")
-    samples = sorted(
-        (path for path in args.sample_dir.glob("*.pkl") if path.stem.isdigit()),
-        key=lambda path: int(path.stem),
-    )
-    if args.sample_id is not None:
-        samples = [path for path in samples if int(path.stem) == args.sample_id]
-    if not samples:
-        parser.error("No matching numbered sample files found")
+    if args.sample_path is not None:
+        if args.sample_id is not None:
+            parser.error("--sample-id can only be used with --sample-dir")
+        args.sample_path = args.sample_path.resolve()
+        if not args.sample_path.is_file() or args.sample_path.suffix != ".pkl":
+            parser.error("--sample-path must point to an existing .pkl file")
+        data = load_pkl(args.sample_path)
+        case_name = data.case_name
+        if data.cc_monitor:
+            uc_type = "scuc"
+        elif data.maintenance_line is not None:
+            uc_type = "topo"
+        else:
+            uc_type = "tcuc"
+        samples = [args.sample_path]
+        args.sample_dir = args.sample_path.parent
+    else:
+        args.sample_dir = args.sample_dir.resolve()
+        uc_type = args.sample_dir.name
+        if uc_type not in ("tcuc", "topo", "scuc"):
+            parser.error("Sample directory must end in tcuc, topo, or scuc (e.g. case5/samples/tcuc)")
+        case_name = next(
+            (part for part in reversed(args.sample_dir.parent.parts)
+             if re.fullmatch(r"case[0-9]+", part)), None,
+        )
+        if case_name is None:
+            parser.error("Sample path must contain a case directory such as case5 or case118")
+        samples = sorted(
+            (path for path in args.sample_dir.glob("*.pkl") if path.stem.isdigit()),
+            key=lambda path: int(path.stem),
+        )
+        if args.sample_id is not None:
+            samples = [path for path in samples if int(path.stem) == args.sample_id]
+        if not samples:
+            parser.error("No matching numbered sample files found")
     log_dir = Path(__file__).resolve().parent / "runs" / "lmp_labels" / case_name
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{uc_type}_{datetime.now():%Y%m%d_%H%M%S}.log"
