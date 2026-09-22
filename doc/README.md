@@ -35,8 +35,8 @@ GE-Sampling/
 │   ├── uc_model.py      # Gurobi modeling and solving: build_uc(data, uc_type, mode) + solve_uc
 │   ├── sampler.py       # sampling: sample_uc for a single sample, run_sampling for batches (multiprocessing / resumable)
 │   ├── data_loader.py   # UCData -> STGCNInput conversion, chunked preprocessing, DataLoader
-│   ├── stgcn.py         # STGCN model (layers/ holds its submodules)
-│   ├── mlp.py           # MLP baseline model
+│   ├── models/          # models grouped under v1/, v2/, v3/; shared layers in common/
+│   │   └── mlp.py       # MLP baseline model
 │   ├── trainer.py       # unified training entry train_model("stgcn"|"mlp", ...)
 │   ├── tester.py        # test case generation, accelerated-solve evaluation, result storage, summary table printing
 │   ├── runner.py        # pipeline orchestration: run_all(case, stages=[...], ...)

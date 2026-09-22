@@ -3,10 +3,10 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from lib.layers.layer_mlp import MLPConfig, MLPLayer
-from lib.layers.layer_pre_norm import PreNormLayer
-from lib.layers.layer_st_conv_v2_2 import STConvBlockV2_2, STConvV22Config
-from lib.layers.module_dync import DyncGraph
+from lib.models.common.layer_mlp import MLPConfig, MLPLayer
+from lib.models.common.layer_pre_norm import PreNormLayer
+from lib.models.v2.layer_st_conv_v2_2 import STConvBlockV2_2, STConvV22Config
+from lib.models.model_input import DyncGraph
 
 
 @dataclass

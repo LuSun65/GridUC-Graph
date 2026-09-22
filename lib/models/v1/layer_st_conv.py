@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.layers.layer_temp_conv import TemporalConvLayer, TemporalConvConfig
-from lib.layers.layer_cheb_conv import ChebConvLayer, ChebConvConfig
+from lib.models.common.layer_temp_conv import TemporalConvLayer, TemporalConvConfig
+from lib.models.common.layer_cheb_conv import ChebConvLayer, ChebConvConfig
 
 
 # ---------------------------------------------------------------------------

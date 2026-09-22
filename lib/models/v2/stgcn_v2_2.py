@@ -3,19 +3,13 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from lib.layers.layer_nn_conv import StaticGraph
-from lib.layers.module_dync import DyncGraph
-from lib.layers.module_dync_v2_2 import DyncModuleV2_2, DyncModuleV22Config
-from lib.layers.module_fusion import FusionGraph
-from lib.layers.module_fusion_v2_2 import (
-    FusionModuleV2_2,
-    FusionModuleV22Config,
-)
-from lib.layers.module_static_v2_2 import (
-    StaticModuleV2_2,
-    StaticModuleV22Config,
-)
-from lib.stgcn import STGCNInput
+from lib.models.model_input import StaticGraph
+from lib.models.model_input import DyncGraph
+from lib.models.v2.module_dync_v2_2 import DyncModuleV2_2, DyncModuleV22Config
+from lib.models.model_input import FusionGraph
+from lib.models.v2.module_fusion_v2_2 import FusionModuleV2_2, FusionModuleV22Config
+from lib.models.v2.module_static_v2_2 import StaticModuleV2_2, StaticModuleV22Config
+from lib.models.model_input import STGCNInput
 
 
 @dataclass

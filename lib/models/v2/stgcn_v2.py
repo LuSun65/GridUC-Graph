@@ -2,12 +2,13 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.stgcn import STGCNInput
-from lib.layers.layer_nn_conv import StaticGraph
-from lib.layers.module_static import StaticModule, StaticModuleConfig
-from lib.layers.module_dync import DyncModule, DyncModuleConfig, DyncGraph
-from lib.layers.module_fusion import FusionGraph
-from lib.layers.module_fusion_attention import (
+from lib.models.model_input import STGCNInput
+from lib.models.model_input import StaticGraph
+from lib.models.v1.module_static import StaticModule, StaticModuleConfig
+from lib.models.v1.module_dync import DyncModule, DyncModuleConfig
+from lib.models.model_input import DyncGraph
+from lib.models.model_input import FusionGraph
+from lib.models.v2.module_fusion_attention import (
     AttentionFusionModule,
     AttentionFusionModuleConfig,
 )

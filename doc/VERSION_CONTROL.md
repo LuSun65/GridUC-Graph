@@ -98,23 +98,22 @@ test: add v1-v2 comparison workflow
 
 ## 4. 模型源码隔离
 
-### 4.1 保留 V1 接口
+### 4.1 按模型版本组织源码
 
-原有 `lib/stgcn.py` 和现有 layers 作为 V1 兼容实现保留。V2 顶层模型及行为不同的模块使用新文件：
+模型统一从 `lib.models` 导入，按版本集中存放；旧顶层模型路径及 `lib/layers/` 已移除，不提供兼容导出。
 
 ```text
-lib/
-├── stgcn.py                         # V1，保持向后兼容
-├── stgcn_v2.py                      # V2 顶层模型
-└── layers/
-    ├── module_static.py             # 行为相同时可共享
-    ├── module_dync.py               # 行为相同时可共享
-    ├── module_fusion.py             # V1，保持不变
-    ├── layer_graph_attention.py     # V2 新增
-    └── module_fusion_attention.py   # V2 新增
+lib/models/
+├── model_input.py       # 共享输入 dataclass
+├── model_registry.py    # 统一模型注册
+├── mlp.py
+├── common/              # 跨版本共享基础层
+├── v1/                  # V1 模型和专属模块
+├── v2/                  # V2、V2.1、V2.2 模型和专属模块
+└── v3/                  # ESA 预留目录
 ```
 
-文件名最终可根据实现细化，但必须能从名称区分共享实现、V1 兼容实现和 V2 专用实现。
+配置 dataclass 与实现同文件。复用的 V1 分支可直接从 `v1/` 导入，共享算子从 `common/` 导入。数据加载器和模型直接使用 `model_input.py` 中的共享输入类型。预处理数据按当前代码生成，不提供旧类路径兼容。
 
 ### 4.2 复用原则
 

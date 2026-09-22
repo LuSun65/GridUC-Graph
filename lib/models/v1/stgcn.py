@@ -2,43 +2,14 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.layers.layer_nn_conv import StaticGraph
-from lib.layers.module_static import StaticModule, StaticModuleConfig
-from lib.layers.module_dync import DyncModule, DyncModuleConfig, DyncGraph
-from lib.layers.module_fusion import FusionModule, FusionModuleConfig, FusionGraph
+from lib.models.model_input import STGCNInput
 
-
-@dataclass
-class STGCNInput:
-    """
-    Batched input for STGCN.
-
-    node_feat_s  [B, G, F_node_s]  — static generator node features (pre-scatter)
-    node_feat_d  [B, T, N, F_node_d]  — dynamic node features (e.g. demand)
-    edge_index   [2, E]            — shared topology
-    edge_attr    [B, E, F_edge]    — per-sample edge features
-    gen_bus      [G]               — bus index of each generator
-    edge_mask    [B, E]            — 1=active, 0=broken line (per sample)
-    uc_target    [B, G, T]         — ground truth (optional, for training)
-    """
-    node_feat_s: torch.Tensor   # [B, G, F_node_s]
-    node_feat_d: torch.Tensor   # [B, T, N, F_node_d]
-    edge_index:  torch.Tensor   # [2, E]
-    edge_attr:   torch.Tensor   # [B, E, F_edge]
-    gen_bus:     torch.Tensor   # [G]
-    edge_mask:   torch.Tensor   # [B, E]
-    uc_target:   torch.Tensor = None  # [B, G, T]
-
-    def to(self, device) -> "STGCNInput":
-        return STGCNInput(
-            node_feat_s = self.node_feat_s.to(device),
-            node_feat_d = self.node_feat_d.to(device),
-            edge_index  = self.edge_index.to(device),
-            edge_attr   = self.edge_attr.to(device),
-            gen_bus     = self.gen_bus.to(device),
-            edge_mask   = self.edge_mask.to(device),
-            uc_target   = self.uc_target.to(device) if self.uc_target is not None else None,
-        )
+from lib.models.model_input import StaticGraph
+from lib.models.v1.module_static import StaticModule, StaticModuleConfig
+from lib.models.v1.module_dync import DyncModule, DyncModuleConfig
+from lib.models.model_input import DyncGraph
+from lib.models.v1.module_fusion import FusionModule, FusionModuleConfig
+from lib.models.model_input import FusionGraph
 
 
 @dataclass

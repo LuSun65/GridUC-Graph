@@ -10,7 +10,7 @@ from torch.optim import Adam
 
 from lib.data_loader import load_processed_data, make_dataloader
 from lib.experiment import ExperimentPaths
-from lib.model_registry import (
+from lib.models.model_registry import (
     MODEL_ALIASES,
     MODEL_REGISTRY,
     build_model,

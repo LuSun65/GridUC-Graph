@@ -2,30 +2,7 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-
-
-@dataclass
-class StaticGraph:
-    """
-    Data format for static graph input.
-
-    edge_index  [2, E]          — shared across all samples
-    edge_attr   [B, E, F_edge]  — per sample edge features
-    node_feat   [B, N, F_node]  — per sample node features (already bus-indexed)
-    edge_mask   [E]             — 1=active, 0=broken line (shared across all samples)
-    """
-    edge_index:  torch.Tensor   # [2, E]
-    edge_attr:   torch.Tensor   # [B, E, F_edge]
-    node_feat:   torch.Tensor   # [B, N, F_node]
-    edge_mask:   torch.Tensor   # [B, E]  1=active, 0=broken line (per sample)
-
-    @property
-    def f_in(self) -> int:
-        return self.node_feat.shape[-1]
-
-    @property
-    def f_edge(self) -> int:
-        return self.edge_attr.shape[-1]
+from lib.models.model_input import StaticGraph
 
 
 @dataclass

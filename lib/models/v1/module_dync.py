@@ -2,27 +2,11 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.layers.layer_pre_norm import PreNormLayer
-from lib.layers.layer_mlp import MLPLayer, MLPConfig
-from lib.layers.layer_st_conv import STConvBlock, STConvConfig
+from lib.models.model_input import DyncGraph
 
-
-@dataclass
-class DyncGraph:
-    """
-    Data format for dynamic graph input.
-
-    x          [B, n_period, N, f_node]  — per sample node features
-    edge_index [2, E]                    — shared across all samples
-    edge_mask  [B, E]                    — 1=active, 0=broken line (per sample)
-    """
-    x:          torch.Tensor   # [B, n_period, N, f_node]
-    edge_index: torch.Tensor   # [2, E]
-    edge_mask:  torch.Tensor   # [B, E]
-
-    @property
-    def f_node(self) -> int:
-        return self.x.shape[-1]
+from lib.models.common.layer_pre_norm import PreNormLayer
+from lib.models.common.layer_mlp import MLPLayer, MLPConfig
+from lib.models.v1.layer_st_conv import STConvBlock, STConvConfig
 
 
 @dataclass

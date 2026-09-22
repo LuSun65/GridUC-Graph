@@ -3,12 +3,12 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from lib.layers.layer_graph_attention import (
+from lib.models.v2.layer_graph_attention import (
     GraphAttentionConfig,
     GraphAttentionLayer,
 )
-from lib.layers.layer_mlp import MLPConfig, MLPLayer
-from lib.layers.module_fusion import FusionGraph
+from lib.models.common.layer_mlp import MLPConfig, MLPLayer
+from lib.models.model_input import FusionGraph
 
 
 @dataclass

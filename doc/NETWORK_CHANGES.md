@@ -2,7 +2,7 @@
 
 ## 1. Previous Architecture
 
-The current STGCN implementation is defined mainly in `lib/stgcn.py`, with reusable layers and submodules under `lib/layers/`.
+The current STGCN implementation is defined mainly in `lib/models/v1/stgcn.py`, with version-specific modules under `lib/models/v1/` and shared layers under `lib/models/common/`.
 
 ### 1.1 Input Representation
 
@@ -57,7 +57,7 @@ The input dimensions and top-level configuration parameters correspond as follow
 
 ### 1.3 Static Branch
 
-The static branch is implemented by `StaticModule` in `lib/layers/module_static.py`. It converts generator-level static features into bus-level static graph embeddings.
+The static branch is implemented by `StaticModule` in `lib/models/v1/module_static.py`. It converts generator-level static features into bus-level static graph embeddings.
 
 ```text
 node_feat_s [B, G, F_node_s]
@@ -106,7 +106,7 @@ The two `NNConvLayer` blocks are edge-conditioned graph convolutions. Each block
 
 ### 1.4 Dynamic Branch
 
-The dynamic branch is implemented by `DyncModule` in `lib/layers/module_dync.py`. It converts bus-level time-series features into one dynamic embedding per bus.
+The dynamic branch is implemented by `DyncModule` in `lib/models/v1/module_dync.py`. It converts bus-level time-series features into one dynamic embedding per bus.
 
 ```text
 node_feat_d [B, T, N, F_node_d]
@@ -150,7 +150,7 @@ The temporal convolutions preserve the time dimension with causal padding. The `
 
 ### 1.5 Fusion Branch
 
-The fusion branch is implemented by `FusionModule` in `lib/layers/module_fusion.py`. It combines static and dynamic bus embeddings, then converts bus-level features back to generator-level time predictions.
+The fusion branch is implemented by `FusionModule` in `lib/models/v1/module_fusion.py`. It combines static and dynamic bus embeddings, then converts bus-level features back to generator-level time predictions.
 
 ```text
 x_static [B, N, H] + x_dynamic [B, N, H]

@@ -3,8 +3,9 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from lib.layers.layer_nn_conv import NNConvConfig, NNConvLayer, StaticGraph
-from lib.layers.layer_pre_norm import PreNormLayer
+from lib.models.common.layer_nn_conv import NNConvConfig, NNConvLayer
+from lib.models.model_input import StaticGraph
+from lib.models.common.layer_pre_norm import PreNormLayer
 
 
 @dataclass

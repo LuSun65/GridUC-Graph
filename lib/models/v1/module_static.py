@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.layers.layer_nn_conv import StaticGraph, NNConvConfig, NNConvLayer
-from lib.layers.layer_pre_norm import PreNormLayer
+from lib.models.model_input import StaticGraph
+from lib.models.common.layer_nn_conv import NNConvConfig, NNConvLayer
+from lib.models.common.layer_pre_norm import PreNormLayer
 
 
 @dataclass

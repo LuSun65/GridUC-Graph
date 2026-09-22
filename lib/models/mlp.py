@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.stgcn import STGCNInput
+from lib.models.model_input import STGCNInput
 
 
 @dataclass

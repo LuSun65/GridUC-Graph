@@ -7,7 +7,7 @@ from typing import List, Tuple
 
 from lib.toolkit import load_pkl
 from lib.case_loader import UCData
-from lib.stgcn import STGCNInput
+from lib.models.model_input import STGCNInput
 from lib.experiment import ExperimentPaths
 
 

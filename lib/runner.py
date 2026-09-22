@@ -8,7 +8,7 @@ from lib.toolkit import setlog
 from lib.sampler import sample_dir, run_sampling
 from lib.data_loader import process_data
 from lib.trainer import train_model
-from lib.model_registry import canonical_model_type
+from lib.models.model_registry import canonical_model_type
 from lib.tester import (
     load_or_generate_test_cases,
     run_testing,

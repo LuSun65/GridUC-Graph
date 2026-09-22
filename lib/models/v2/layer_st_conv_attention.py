@@ -3,11 +3,11 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from lib.layers.layer_graph_attention import (
+from lib.models.v2.layer_graph_attention import (
     GraphAttentionConfig,
     GraphAttentionLayer,
 )
-from lib.layers.layer_temp_conv import TemporalConvConfig, TemporalConvLayer
+from lib.models.common.layer_temp_conv import TemporalConvConfig, TemporalConvLayer
 
 
 @dataclass

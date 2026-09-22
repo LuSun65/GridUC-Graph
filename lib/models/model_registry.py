@@ -3,11 +3,12 @@ from typing import Any, Dict, Mapping, Type
 
 import torch.nn as nn
 
-from lib.mlp import MLP, MLPConfig
-from lib.stgcn import STGCN, STGCNConfig, STGCNInput
-from lib.stgcn_v2 import STGCN_V2, STGCNV2Config
-from lib.stgcn_v2_1 import STGCN_V2_1, STGCNV21Config
-from lib.stgcn_v2_2 import STGCN_V2_2, STGCNV22Config
+from lib.models.mlp import MLP, MLPConfig
+from lib.models.v1.stgcn import STGCN, STGCNConfig
+from lib.models.model_input import STGCNInput
+from lib.models.v2.stgcn_v2 import STGCN_V2, STGCNV2Config
+from lib.models.v2.stgcn_v2_1 import STGCN_V2_1, STGCNV21Config
+from lib.models.v2.stgcn_v2_2 import STGCN_V2_2, STGCNV22Config
 
 
 @dataclass(frozen=True)

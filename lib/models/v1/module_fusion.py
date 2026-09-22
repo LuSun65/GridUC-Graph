@@ -2,26 +2,10 @@ import torch
 import torch.nn as nn
 from dataclasses import dataclass
 
-from lib.layers.layer_cheb_conv import ChebConvLayer, ChebConvConfig
-from lib.layers.layer_mlp import MLPLayer, MLPConfig
+from lib.models.model_input import FusionGraph
 
-
-@dataclass
-class FusionGraph:
-    """
-    Data format for fusion module input.
-
-    x_static:  [B, N, f_in]  — output of StaticModule
-    x_dynamic: [B, N, f_in]  — output of DyncModule
-    edge_index [2, E]         — shared across all samples
-    edge_mask  [B, E]         — 1=active, 0=broken line (per sample)
-    gen_bus:   [G]            — bus index of each generator
-    """
-    x_static:   torch.Tensor  # [B, N, f_in]
-    x_dynamic:  torch.Tensor  # [B, N, f_in]
-    edge_index: torch.Tensor  # [2, E]
-    edge_mask:  torch.Tensor  # [B, E]
-    gen_bus:    torch.Tensor  # [G]
+from lib.models.common.layer_cheb_conv import ChebConvLayer, ChebConvConfig
+from lib.models.common.layer_mlp import MLPLayer, MLPConfig
 
 
 @dataclass
