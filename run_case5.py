@@ -2,25 +2,41 @@ from pathlib import Path
 
 from lib.runner import run_all
 
+# Project directory containing this script.
 PROJECT_ROOT = Path(__file__).resolve().parent
+# Local data: GridUC-Graph-v2/data.
+LOCAL_INPUT_ROOT = PROJECT_ROOT / "data"
+# Legacy data: GridUC-Graph/data.
 V1_INPUT_ROOT = PROJECT_ROOT.parent / "GridUC-Graph" / "data"
 
 # sample_solver / test_solver: "none" | "lazy" | "dense"
 if __name__ == "__main__":
     run_all(
+        # Shared.
         case="case5",
         stages=["train", "test", "summary"],
-        n_samples=200,
-        n_test=5,
-        epochs=50,
-        batch_size=32,
-        device="cpu",
-        sample_solver="dense",
-        test_solver="dense",
-        workers=4,
-        models=("stgcn_v2", "stgcn_v1", "mlp"),
+        uc_types=("tcuc", "topo", "scuc"),
         input_root=V1_INPUT_ROOT,
         output_root=PROJECT_ROOT,
         run_id="v2-test",
+
+        # Train / test / summary.
+        models=("stgcn_v2", "stgcn_v1", "mlp"),
+
+        # Train / test.
+        device="cpu",
+
+        # Sample.
+        n_samples=200,
+        sample_solver="dense",
+        workers=4,
+
+        # Train.
+        epochs=50,
+        batch_size=32,
+
+        # Test.
+        n_test=5,
+        test_solver="dense",
         checkpoint_run_id="v2-test",
     )
