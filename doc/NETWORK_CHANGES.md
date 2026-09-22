@@ -177,11 +177,13 @@ The Fusion `ChebConvLayer` propagates information across the masked bus graph af
 
 ## 2. Completed Changes
 
-### 2.1 STGCN V2.0 (`stgcn_v2`)
+### 2.1 Graph Attention Layer
 
-V2.0 keeps the V1 input/output contract and the existing Static and Dynamic
-branches unchanged. The only structural change is in the Fusion branch, where
-`ChebConvLayer` is replaced by a masked multi-head `GraphAttentionLayer`:
+This section covers the introduction of masked graph attention layers in the Fusion and Dynamic branches, increased network depth, and normalization and residual connection improvements for training stability.
+
+#### 2.1.1 Fusion Attention (V2.0)
+
+V2.0 keeps the V1 input/output contract and the existing Static and Dynamic branches unchanged. The only structural change is in the Fusion branch, where `ChebConvLayer` is replaced by a masked multi-head `GraphAttentionLayer`:
 
 ```text
 x_static [B, N, H] + x_dynamic [B, N, H]
@@ -191,16 +193,11 @@ x_static [B, N, H] + x_dynamic [B, N, H]
 -> logits [B, G, T]
 ```
 
-Attention is normalized over each destination bus's active incoming edges using
-`edge_mask`. Each bus also has an always-active self-loop so that its own
-representation is retained and isolated buses remain valid.
+Attention is normalized over each destination bus's active incoming edges using `edge_mask`. Each bus also has an always-active self-loop so that its own representation is retained and isolated buses remain valid.
 
-### 2.2 STGCN V2.1 (`stgcn_v2.1`)
+#### 2.1.2 Dynamic Attention (V2.1)
 
-V2.1 keeps the V1 input/output contract and Static branch unchanged, and retains
-the V2.0 attention-based Fusion branch. The Dynamic branch now also replaces the
-spatial `ChebConvLayer` in both `STConvBlock`s with masked multi-head
-`GraphAttentionLayer`s applied independently at each time step:
+V2.1 keeps the V1 input/output contract and Static branch unchanged, and retains the V2.0 attention-based Fusion branch. The Dynamic branch now also replaces the spatial `ChebConvLayer` in both `STConvBlock`s with masked multi-head `GraphAttentionLayer`s applied independently at each time step:
 
 ```text
 node_feat_d [B, T, N, F_node_d]
@@ -214,10 +211,9 @@ x_static [B, N, H] + x_dynamic [B, N, H]
 -> logits [B, G, T]
 ```
 
-Both Dynamic and Fusion attention use `edge_mask` and always-active self-loops.
-The default configuration uses four attention heads.
+Both Dynamic and Fusion attention use `edge_mask` and always-active self-loops. The default configuration uses four attention heads.
 
-### 2.3 STGCN V2.2 (`stgcn_v2.2`)
+#### 2.1.3 Network Depth and Stability (V2.2)
 
 V2.2 changes network depth. Current receptive-field baseline（for case 2383):
 
@@ -228,36 +224,25 @@ V2.2 changes network depth. Current receptive-field baseline（for case 2383):
 | V2.1  |                    718,785 | 2 NNConv = 2 hops |                    2 GAT ST blocks = 2 hops |               1 GAT = 1 hop |                          3 hops |                           3 hops |                     9 steps | Full input horizon (`T`) |
 | V2.2  |                  1,846,529 | 6 NNConv = 6 hops | 2 ST blocks, each with 2 ChebConv = 8 hops |             2 GAT = 2 hops |                          8 hops |                          10 hops |                     9 steps | `Full input horizon (T)` |
 
-Assumptions: Cheb `k_s = 3` = max 2 hops; NNConv/GAT = 1 hop per layer.
-Temporal RF: `1 + 2 * dynamic_st_blocks * (k_t - 1)`; current value = 9.
+Assumptions: Cheb `k_s = 3` = max 2 hops; NNConv/GAT = 1 hop per layer. Temporal RF: `1 + 2 * dynamic_st_blocks * (k_t - 1)`; current value = 9.
 
 V2.2 also includes the following stability changes:
 
-1. PRENORM is an independent calibration process with no gradients or parameter
-   updates. When calibration uses the full training set, `PreNormLayer`
-   accumulates the mean and variance instead of overwriting them after each
-   batch.
-2. NNConv, ChebConv, and GAT use normalized residual blocks, such as
-   `x = LayerNorm(x + alpha * GraphConv(x))`. The residual branch uses a linear
-   projection when the input and output dimensions differ.
-3. NNConv uses a degree-normalized sum or mean for neighbor aggregation to limit
-   layer-by-layer growth in activation magnitude.
+1. PRENORM is an independent calibration process with no gradients or parameter updates. When calibration uses the full training set, `PreNormLayer` accumulates the mean and variance instead of overwriting them after each batch.
+2. NNConv, ChebConv, and GAT use normalized residual blocks, such as `x = LayerNorm(x + alpha * GraphConv(x))`. The residual branch uses a linear projection when the input and output dimensions differ.
+3. NNConv uses a degree-normalized sum or mean for neighbor aggregation to limit layer-by-layer growth in activation magnitude.
 
-### 2.4 Multi-Task Learning
+### 2.2 Multi-Task Learning
 
-#### 2.4.1 Generating Local Marginal Price Labels
+#### 2.2.1 Generating Local Marginal Price Labels
 
-`lib/lmp_sover.py` fixes the sample's commitment, startup, and shutdown states and solves a dense LP
-with Gurobi, supporting samples generated with either dense or lazy constraints.
-`fixed_commitment_lp_v1` assumes all units are initially off, no balance slack, tolerances of
-`1e-8`, and only accepts `OPTIMAL`; the same solve produces dispatch and short-term LMP:
+`lib/lmp_sover.py` fixes the sample's commitment, startup, and shutdown states and solves a dense LP with Gurobi, supporting samples generated with either dense or lazy constraints. `fixed_commitment_lp_v1` assumes all units are initially off, no balance slack, tolerances of `1e-6`, and only accepts `OPTIMAL`; the same solve produces dispatch and short-term LMP:
 
 `LMP = balance dual + PTDFᵀ × sum of line upper/lower-bound duals + contingency term`
 
-Non-SCUC models omit the last term. The formula requires finite-difference validation;
-changes to these conventions require a rule-version update.
+Non-SCUC models omit the last term. The formula requires finite-difference validation; changes to these conventions require a rule-version update.
 
-#### 2.4.2 Adding Labels to Existing Samples
+#### 2.2.2 Adding Labels to Existing Samples
 
 `label_pricing.py` calls `lib/label_pricing.py` to add:
 
@@ -274,215 +259,137 @@ Run in the `lu_uc` environment; the case and UC type are inferred from the path:
 python label_pricing.py --sample-dir ../GridUC-Graph/data/case5/samples/tcuc
 ```
 
-By default, all samples are processed and valid labels are skipped; `--sample-id 1` selects one
-sample, and `--overwrite` forces recomputation. Validated results are saved atomically, preserving
-the original scenario; the hash covers only the commitment matrix. Failures leave the original
-file intact and processing continues; failed matrix inversion does not fall back to a pseudoinverse.
-The console and logs under `runs/lmp_labels/casexx/` record status, runtime, and the failure list
-without tracebacks; any failure results in a nonzero exit code. Integration with new-sample
-generation and training data remains pending.
+By default, all samples are processed and valid labels are skipped; `--sample-id 1` selects one sample, and `--overwrite` forces recomputation. Validated results are saved atomically, preserving the original scenario; the hash covers only the commitment matrix. Failures leave the original file intact and processing continues; failed matrix inversion does not fall back to a pseudoinverse. The console and logs under `runs/lmp_labels/casexx/` record status, runtime, and the failure list without tracebacks; any failure results in a nonzero exit code. Integration with new-sample generation and training data remains pending.
 
 ## 3. Planned Changes
 
 ### 3.1 Edge Set Attention
 
-计划采用 [davidbuterez/edge-set-attention](https://github.com/davidbuterez/edge-set-attention)
-仓库中的 Edge Set Attention（ESA）模型。可以复用其核心模块，但不能只加一条
-`import` 就直接训练现有 UC 任务；仍需适配数据、输出与训练流程。
+使用 [ESA](https://github.com/davidbuterez/edge-set-attention) 替换现有空间处理，保留时间与空间交替聚合。
 
-主要有三处适配：
+#### 3.1.1 模型结构设计
 
-- **输入适配**：ESA 接收节点特征、边索引、边特征和批次信息。现有的静态机组
-  特征、动态时序特征以及检修线路 `edge_mask`，需要转换并接入它的计算流程。
-- **输出适配**：原版边模式主要面向图级预测，通过池化生成整张图的表示；本项目
-  需要输出每台机组、每个时段的 `logits [B, G, T]`，因此需要设计对应的预测头。
-  原仓库的节点级任务使用 NSA，而不是边模式 ESA。
-  参见[仓库说明](https://github.com/davidbuterez/edge-set-attention#node-level-tasks)。
-- **训练适配**：把模型接到现有 UC 标签、损失函数、训练和评估流程中。原仓库的
-  `Estimator` 已封装自己的训练逻辑，直接套用也需要调整。
-  参见[源码](https://github.com/davidbuterez/edge-set-attention/blob/main/esa/models.py)。
+保留母线时序主干，空间信息聚合采用 ESA（边集合注意力），将空间算子统一替换为 `ESASpatial`。显式保留每条线路的表示，结合线路属性学习线路之间的关联。
 
-建议复用 ESA 核心网络，在本项目中增加一个适配模型，沿用现有训练框架。
-下一步先确定它是替换整个 STGCN，还是仅替换其中的空间特征提取部分；这会决定
-时序信息如何处理，以及 ESA 的结果如何转成机组预测。具体接入方案与实现细节
-后续讨论。
+```text
+静态：机组特征 → 母线映射 → ESASpatial
+动态：[时间卷积 → ESASpatial（含全局交互）→ 时间卷积] ×2
+      → 全周期压缩
+融合：拼接静态与动态表示 → ESASpatial
+      → 选取机组母线 → 时间展开 → UC logits
+```
+
+在时空模块内部引入远距离全局信息交互。动态 ESA 在每个时刻独立计算，接收时间卷积编码的历史信息，通过边 token 的全局交互汇集同一时刻全系统的负荷与报价信息，再交给后续时间卷积建模全系统供需变化及其跨时段影响。保留时间与空间交替聚合、全周期压缩与输出头；最终预测仍依赖完整输入周期。
+
+#### 3.1.2 模型接口设计
+
+`ESASpatial`：母线端点特征与线路属性 → 边 token → ESA encoder self-attention → 按目标母线汇总 → 节点残差与归一化。
+
+全局信息交互采用 encoder self-attention，以边 token 为 query，输出保留逐边对应关系。局部交互可使用拓扑 mask；时空模块中的全局交互层不使用限制远距离连接的拓扑 mask，但始终保留断线及 padding 的有效性 mask，并隔离不同样本与不同时刻的 token。
+
+原版边模式没有现成的母线级输出接口，需新增边到母线读出，首版采用有效入边均值。保留双向边，断线边不得参与注意力或读出，孤立母线通过残差保留自身特征。动态与融合接口需补传线路属性。
 
 ### 3.2 多任务学习
 
-第一个辅助任务将是**节点边际电价（LMP）**预测。
-标签不能直接从原始 UC 求解中读取：UC 是一个 MILP，
-包含整数变量的模型所给出的对偶值不能作为有效的市场价格。
-因此，这里采用的初始定义是：将样本中的最优开停机决策固定后，
-通过连续经济调度定价求解得到的短期 LMP。它表示在保持开停机决策不变的情况下，
-某个母线在某个时段额外供应 1 MW 负荷的边际成本；它并不是允许开停机决策本身
-发生变化时，通过有限差分计算得到的边际成本。
+第一个辅助任务将是**节点边际电价（LMP）**预测。标签不能直接从原始 UC 求解中读取：UC 是一个 MILP，包含整数变量的模型所给出的对偶值不能作为有效的市场价格。因此，这里采用的初始定义是：将样本中的最优开停机决策固定后，通过连续经济调度定价求解得到的短期 LMP。它表示在保持开停机决策不变的情况下，某个母线在某个时段额外供应 1 MW 负荷的边际成本；它并不是允许开停机决策本身发生变化时，通过有限差分计算得到的边际成本。
 
-#### 3.2.1 定价标签生成加速计划
+#### 3.2.1 模型接口
 
-目标是在保持固定开停机定价模型、完整网络约束和求解精度的前提下，降低
-`label_pricing.py` 在大规模系统上的标签生成时间。本节为待实施计划。
-保留 `FeasibilityTol = OptimalityTol = 1e-8`、仅接受 `OPTIMAL`、无平衡松弛、
-初始机组全停及目标函数包含固定成本的约定，不通过放宽容差、减少故障场景或
-提前停止求解来加速。实际求解的是连续 LP，调整 `MIPGap` 不适用于此阶段。
-
-**先建立耗时基线。** 将单样本总耗时拆分为加载、PTDF 计算、建模、固定变量与
-LP 复制、优化、标签提取和保存，并记录峰值内存。现有 `pricing_solve_time`
-仅记录 Gurobi `Runtime`，不能代表端到端耗时。使用固定的 case5、case118 及
-更大系统样本子集比较，覆盖 TCUC、TOPO、SCUC 和不同故障集合；在完成测量前
-不预设加速倍数。
-
-按以下优先级逐步实施，每一步单独比较性能和标签质量：
-
-1. **缓存 PTDF。** 当前每个样本都会重新计算基础及各故障场景的 PTDF，而负荷
-   和报价变化不影响 PTDF。TCUC 复用相同网络的基础矩阵；TOPO 按检修线路缓存；
-   SCUC 按故障线路缓存，再按该样本 `cc_monitor` 的顺序组合。缓存键包含网络
-   连接、电抗、参考节点和故障处理规则，不能只使用算例名称。容量及故障后容量
-   单独更新或纳入对应缓存键。采用进程内缓存并设置内存上限，不必将 PTDF 写入
-   样本 pickle；保留当前矩阵计算与截断规则。
-2. **批量访问 Gurobi 属性。** 保存变量和约束引用，批量设置 `z/u/v` 的上下界，
-   批量读取出力 `X` 及约束对偶值 `Pi`，替代逐元素按名称查询。SCUC 线路上下限
-   对偶值数量为 `2 * L * T * (1 + K)`，其中 `L` 为线路数、`T` 为时段数、
-   `K` 为故障数。必须保持索引顺序与 LMP 公式一致；`relax()` 复制后的引用需
-   对应新模型，不能沿用原模型对象。
-3. **受控的样本间多进程并行。** 每个进程使用独立 Gurobi 环境，每个样本只
-   分配给一个进程。联合限制进程数、Gurobi 线程数和 BLAS 线程数，根据峰值
-   内存及许可证能力选择并发量。保留原子保存、有效标签跳过和失败汇总行为，
-   使用集中日志或唯一日志文件名，避免当前秒级时间戳导致并发日志重名。
-4. **复用定价 LP 模板。** 按相同网络、变量结构和故障集合复用模型，逐样本
-   更新负荷、报价、容量及固定状态，减少完整 UC 重建和 `relax()` 复制。
-   当前报价位于 `pwl_cost` 约束系数中，不能仅更新目标函数及 RHS。也可评估
-   直接建立固定状态的连续模型，但须保留原有逻辑约束的可行性验证、爬坡约束
-   和固定成本，避免接受原模型本应拒绝的开停机序列。
-
-若上述措施后仍有明显瓶颈，再评估以下方案：
-
-- **稀疏 PTDF 计算：** 以稀疏矩阵分解和线性方程求解替代稠密矩阵显式求逆。
-  保持现有软故障语义（故障线路电抗加倍、容量减半及既有容量倍率），不能
-  直接替换为完全断线模型；检查数值误差及现有 `1e-6` 截断阈值附近的变化。
-- **LP 算法与基热启动：** 在相同精度下比较单纯形、障碍法及基复用，评估
-  热启动与预求解的配合。收益以样本子集实测为准。
-- **精确约束生成：** 从部分线路约束开始，每轮求解后检查全部基态和故障
-  潮流，补入违反约束，直至完整约束集均满足要求。不能直接使用当前依赖
-  `MIPSOL` 的 UC lazy 回调；需设计 LP 外层迭代、完整约束验证和对偶值映射，
-  并评估与当前 dense 定价规则及版本的兼容性。
-
-**质量与验收标准。** 保持最优目标值和可行性并不保证 LMP 逐元素完全相同：
-LP 存在多重最优解时，算法、热启动或模型表示变化可能选择不同的最优出力或
-对偶解。优先完成缓存和批量属性访问等不改变模型的优化；后续方案分别检查
-完整约束残差、目标值、出力和 LMP 差异，并按 3.2.4 进行有限差分验证。
-对差异区分数值误差、合法的多重最优解及实现错误，不仅凭 `OPTIMAL` 判定
-标签一致。报告单样本耗时、批量吞吐量、峰值内存和质量对比；定价约定变化时
-更新规则版本，验证通过后再用于全部数据集。
-
-参考：[Gurobi 批量模型求解建议](https://support.gurobi.com/hc/en-us/articles/25414264687121-Solving-batches-of-models-with-short-model-runtimes-Efficient-API-usage-parameter-tuning-and-deployment-considerations)、
-[多进程环境管理](https://support.gurobi.com/hc/en-us/articles/360043111231-How-do-I-use-multiprocessing-in-Python-with-Gurobi)、
-[LP 热启动](https://doc.gurobi.com/projects/optimizer/en/current/features/warmstart.html)。
-
-#### 3.2.2 定价 LP 不可行诊断与修复计划
-
-本节为待实施方案，不代表已修改求解器或确认失败根因。
-`runs/lmp_labels/case118/tcuc_20260915_201314.log` 中，1000 个样本有 456 个
-保存成功、544 个失败；失败均为 `status=3, sol_count=0`，即定价 LP 不可行。
-每个失败在处理时和末尾汇总时各记录一次，因此 ERROR 行数不等于失败样本数。
-
-若原 UC 与定价 LP 的数据、约束完全一致，且保存的整数方案确实可行，固定该
-方案后的 LP 应当可行。当前需要排查的是历史采样模式、整数取整及数值容差，
-不能仅凭状态码认定线路约束或启停方案错误。当前两个项目的 `uc_model.py`
-内容一致，但旧样本没有记录生成时的求解模式、模型版本和容差，当前代码不能
-完全证明历史配置。定价强制使用 dense 约束，历史样本若使用 none 模式则可能
-缺少线路限制；若使用 lazy 模式，还需核对 `lazy_tol=1e-4` 与定价容差的差异。
-
-**先补充诊断信息。** 在 `lib/lmp_sover.py` 的 `_solve_pricing_lp()` 中，针对
-`GRB.INFEASIBLE` 增加可选 IIS 诊断。先选少量失败样本（如 0、1、4），调用
-`computeIIS()`，记录样本 ID、约束名称以及被标记的变量上下界；必要时导出
-冲突模型。IIS 是不可约冲突约束集，移除其中任一成员可消除该集合自身的冲突，
-但它不一定是数量最少的冲突集合，也不保证模型没有其他冲突。它只能定位矛盾，
-不会自动修复模型；出现线路约束并不意味着应该放宽线路限额。
-
-按以下顺序判别并修复：
-
-1. **数值容差对照。** 保持场景、固定状态和完整约束不变，仅比较
-   `FeasibilityTol=1e-8` 与 `1e-6` 的结果，检查可行解的实际约束残差和模型
-   尺度。只有违反量处于微小数值范围，才支持数值边界问题的判断；放宽后
-   成功本身不足以证明标签可靠。明显的容量缺口或线路越限不能靠放宽容差处理。
-2. **固定启停方案检查。** 若 IIS 涉及 `balance`、`pmax/pmin` 和固定状态，先
-   核对每时段 `sum(Pmin * z) <= demand.sum() <= sum(Pmax * z)`；这是必要条件，
-   还须检查爬坡、最小开停时间和输电限制。保持同一场景与完整约束，释放启停
-   变量重新求 UC：若恢复可行，在确认模型定义正确后重新生成启停方案及关联
-   标签；若仍不可行，则继续检查场景数据和模型，不将问题仅归因于旧方案。
-3. **线路模型核查。** 若 IIS 涉及 `flow_ub/flow_lb`，核对线路容量、单位、
-   PTDF、母线索引及历史采样模式。数据或构造错误应修正；若线路定义正确而
-   旧样本未包含这些限制，应在完整模型下重新求 UC。若释放启停后仍不可行，
-   检查该负荷场景是否超出网络供电能力。临时去掉线路限制只能辅助定位，不能
-   作为删除约束或接受定价标签的依据。
-
-**元数据、标签与日志。** 后续保存采样求解模式、模型版本和实际容差，记录
-定价容差与诊断结果。若改变定价规则或容差，更新 `PRICING_RULE`，重新生成
-受影响的旧标签，避免已有 456 个成功标签与新标准混用。失败样本继续保持
-原文件不变；日志保留逐样本错误、最终数量与失败 ID 汇总，取消末尾逐条重复
-的 ERROR。修复后按 3.2.4 检查完整约束残差和 LMP 有限差分，再推广到全量。
-
-#### 3.2.3 处理后的数据与模型接口约定
-
-扩展 `STGCNInput`、`concat_stgcn_inputs`、`STGCNDataset`、collate 函数
-以及处理后数据的验证逻辑，加入：
+扩展 `STGCNInput`、`concat_stgcn_inputs`、`STGCNDataset`、collate 函数以及处理后数据的验证逻辑，加入：
 
 - `lmp_target [B, N, T]` 及可选的有效性掩码；
-- `p_target [B, G, T]` 及可选的有效性掩码。
-
-提升处理后数据/检查点的数据模式版本，并且仅在显式单任务模式下允许读取旧的
-仅含 UC 的处理后数据文件。所有目标归一化统计量都只能根据训练集计算，并保存
-在检查点/清单文件中。在样本 pickle 中保留原始 LMP 值。由于拥塞或供给稀缺时
-LMP 可能呈现重尾分布，首先采用基于训练集的稳健截断加标准化，并以物理单位
-再次报告指标；不要根据测试集计算截断阈值。
+- 检查所选任务的标签是否齐全，缺失时提示补充。
+- 为处理后的数据增加格式版本，并随模型保存任务配置和归一化参数。
+- 仅用训练集计算电价均值和标准差，供训练、验证、测试及预测统一使用。
+- 根据训练集分布和验证效果决定是否截断极端电价，默认保留。
+- 将预测值还原到原始电价单位，与原始标签比较误差。
 
 网络应保留共享的静态/动态编码器，并提供独立的任务头：
 
 ```text
 共享母线表示 [B, N, H]
 |- UC 任务头       -> uc_logits [B, G, T]
-|- LMP 任务头      -> lmp_pred  [B, N, T]
-`- 发电出力任务头  -> p_pred    [B, G, T]   （首次实验中可选）
+`- LMP 任务头      -> lmp_pred  [B, N, T]
 ```
 
-使用结构化输出对象，而不是改变当前单一输出张量的含义。LMP 任务头必须保持
-母线级别；使用 `gen_bus` 进行选择会错误地丢弃没有发电机的母线上的电价。
-UC 和发电出力任务头可以通过 `gen_bus` 将共享母线表示映射到发电机。
+使用结构化输出对象，而不是改变当前单一输出张量的含义。LMP 任务头必须保持母线级别；使用 `gen_bus` 进行选择会错误地丢弃没有发电机的母线上的电价。UC 任务头通过 `gen_bus` 将共享母线表示映射到发电机。
 
-使用如下加权损失进行训练：
+#### 3.2.2 训练流程
+
+UC 为主任务，LMP 为辅助任务，提供两种可选训练流程：方案一通过预训练后 UC+LMP 联合训练利用辅助监督；方案二通过 LMP 预训练后仅用 UC 微调，为主任务提供编码器初始化。两种方案均以 UC 验证指标作为模型选择的主要依据。
+
+**方案一：预训练后联合多任务训练。** 预训练阶段可仅用 UC 的 BCE 损失更新共享编码器和 UC 头，也可用 UC+LMP 加权损失共同训练共享编码器与两个任务头；随后进入联合训练阶段，共享编码器与两个任务头共同更新，使用：
 
 ```text
 L = L_uc_BCE + lambda_lmp * L_lmp_Huber
-                 + lambda_p * L_power_Huber
 ```
 
-其中，回归损失使用归一化后的目标和掩码计算。分别记录各项原始损失、加权贡献
-以及共享编码器的梯度尺度；否则，表面上改善的总损失可能掩盖主要 UC 任务的
-性能下降。先仅使用 UC+LMP，在验证数据上调整 `lambda_lmp`，并将添加发电出力
-任务头作为一项独立的消融实验。
+在验证集上调整 `lambda_lmp`，分别记录各项原始损失、加权贡献以及共享编码器的梯度尺度，避免总损失的改善掩盖主要 UC 任务的性能下降。
 
-#### 3.2.4 验证与逐步实施
+**方案二：LMP 预训练后仅用 UC 微调。** 先用 `L = L_lmp_Huber` 训练共享编码器和 LMP 头，再接入 UC 头，用 `L = L_uc_BCE` 更新共享编码器与 UC 头，LMP 头不参与微调。LMP 在此方案中仅提供编码器初始化，最终训练目标为 UC；与仅用 UC 从头训练的基线比较，确认 LMP 预训练是否有益。微调后不保证保留 LMP 预测性能。
+
+两种方案中的 LMP 回归损失均使用归一化后的目标和有效性掩码（如有）计算，评估时将预测值还原到原始电价单位。
+
+#### 3.2.3 定价标签生成加速计划
+
+本节为待实施计划，尚未实现并行或测得加速比。**首选最小方案：样本级多进程 + 每进程线程限额，先测 2 个 worker，再决定是否增加到 4 个。** 目标是提高批量标签吞吐量；单样本运行不受益于样本并行。
+
+**当前依据与原方案比较。** `label_pricing.py` 用串行循环调用 `label_sample()`；每个样本独立加载、重算 PTDF、建立 dense UC、固定启停状态、复制为 LP、求解并保存。代码未显式设置 Gurobi `Threads/Method`，NumPy 底层也可能多线程，因此不能把整个流程视作单线程，更不能仅凭 CPU 利用率推断瓶颈。case2383 的 `tcuc_v2_20260921_201015.log` 中样本 8–11 的端到端耗时约为 48–50 秒，但尚无分阶段计时。
+
+| 方案                      | 主要收益                                   | 改动与约束                                                     | 本次优先级             |
+| ------------------------- | ------------------------------------------ | -------------------------------------------------------------- | ---------------------- |
+| 样本并行（原第 3 项）     | 同时推进独立样本，覆盖建模、求解和结果处理 | 改动集中在调度与线程配置；峰值内存随并发增加                   | 第一阶段，最小可用方案 |
+| PTDF 缓存（原第 1 项）    | 避免相同网络重复矩阵计算                   | 需要可靠缓存键和内存上限；不同拓扑命中率不确定                 | PTDF 耗时占比高时再做  |
+| 批量属性访问（原第 2 项） | 减少逐变量/约束 Python 调用                | 需保持名称、索引和 relax 后模型引用一致；收益取决于耗时占比    | 属性读写成为瓶颈时再做 |
+| LP 模板复用（原第 4 项）  | 减少重建和复制模型                         | 必须完整更新负荷、报价、容量、固定状态及成本系数，验证成本最高 | 暂缓                   |
+
+**第一阶段实现范围。**
+
+1. 在 `label_pricing.py` 增加 `--workers`（默认 1）和 `--solver-threads`（并行时默认 1），采用 `ProcessPoolExecutor` 和 `spawn`。父进程分发唯一文件路径及简单参数；子进程内调用现有 `label_sample()`，沿用每个样本独立创建并释放 Gurobi 环境的方式，不跨进程传递模型或完整样本对象。`--workers 1` 保留串行路径，单文件模式只启动一个执行单元。
+2. 将求解线程参数传到 `solve_pricing()`，在定价 LP 优化前显式设置 `Threads`。并行模式下，在导入 NumPy、启动子进程之前设置 `OMP_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`、`MKL_NUM_THREADS=1`，避免多个 worker 各自争用所有核心。记录实际线程配置；第一阶段不调整 `Method`。
+3. 子进程就地原子保存，只向父进程返回样本 ID、状态、耗时及错误信息。父进程按完成顺序统一写日志和统计，日志名加入 PID 或唯一运行 ID，避免并发启动重名。保留有效标签跳过、`--overwrite`、失败样本汇总及失败时非零退出码；任务异常由父进程记录，进程池异常时报告未完成 ID。一次运行内同一文件只分发一次，也不与其他运行重叠写入同一批样本。
+4. 先测单样本峰值内存，再启动 2 个 worker。设可用 CPU 数为 C、每 worker 求解线程数为 T、并发数为 W，控制 `W × T ≤ C`；以 `W × 单 worker 峰值内存` 加父进程开销估算总内存，并预留至少 25% 可用内存。case2383、case6515 和 SCUC 不直接按 CPU 核数开满；还需确认当前 Gurobi 许可允许所选并发量。
+
+**最小验收与配置选择。** 在独立样本副本上固定选取 12–20 个代表性样本，各配置使用同一输入并强制重新计算，避免有效标签跳过造成虚假提速。比较当前串行配置、`W=1/T=1`、`W=2/T=1`；内存充足且吞吐改善时再测 `W=4/T=1`。分别评估 tcuc/topo/scuc，记录包含进程启动、加载、建模、求解和保存的总墙钟时间、成功样本/秒、失败数及全部 worker 的峰值总内存。`pricing_solve_time` 仍只表示 Gurobi 求解时间，不能拿它代替端到端耗时。选择吞吐量明显提高且无内存压力的最小 W；若并行收益不足或内存受限，回到串行并补充 PTDF、建模、LP 复制、优化、结果提取与读写的分阶段计时，再决定下一步。当前没有依据承诺 2 倍或 4 倍加速。
+
+保持现有固定开停机、完整网络约束、无平衡松弛、初始全停及固定成本约定。当前代码为 `FeasibilityTol = OptimalityTol = 1e-6`（原计划写为 `1e-8`，此处与代码同步），本次加速不调整容差，仅接受 `OPTIMAL`。串行与并行比较完整约束残差、目标值、出力及 LMP，并按 3.2.5 验证有限差分；多重最优解可能导致合法差异，不能只凭 `OPTIMAL` 判定一致，也不要求逐位相同。验证跳过、覆盖、失败文件不变及中断后可重跑。纯调度优化不修改 `PRICING_RULE`；若后续改变定价约定，则更新规则版本并重新验证。
+
+**后续按瓶颈选做。** PTDF 缓存优先使用每进程有容量上限的缓存，键包含网络连接及顺序、电抗、参考节点、故障规则和截断规则；故障集合保持顺序。只缓存 PTDF 时，线路容量及故障后限额仍根据当前样本计算，不复用旧容量。LP 模板复用需完整更新包括 `pwl_cost` 在内的系数，并保留逻辑可行性检查、爬坡约束和固定成本。稀疏 PTDF、算法/基热启动和精确约束生成均留待后续独立评估；约束生成必须检查全部基态与故障潮流、正确映射对偶值，不能直接复用 UC 的 `MIPSOL` 回调。
+
+#### 3.2.4 定价 LP 不可行诊断与修复计划
+
+本节待实施，根因未确认。case118 日志 `tcuc_20260915_201314.log` 中，1000 个样本有 456 个成功、544 个 LP 不可行，ERROR 存在重复记录。旧样本缺少历史配置，需核查采样模式、整数取整和容差：历史 none 可能缺线路约束，lazy 容差也可能与 dense 定价不一致。
+
+先在 `lib/lmp_sover.py` 中对少量失败样本启用 IIS，记录冲突约束和变量边界； IIS 仅用于定位，不能据此放宽限额。依次检查：
+
+1. **容差：** 固定模型比较 `1e-8` 与 `1e-6` 的残差和尺度；放宽后成功不代表标签可靠。
+2. **启停：** 检查容量、爬坡、最小开停时间及输电约束；释放启停重求完整 UC，核实模型后重生成可行方案与标签，仍不可行则排查场景。
+3. **线路：** 核对容量、单位、PTDF、索引和历史模式；修正错误，旧样本缺约束时重求完整 UC，仍不可行则检查供电能力。
+
+保存模式、版本、容差及诊断结果；规则变化时更新 `PRICING_RULE` 并重生成受影响标签。失败文件不变，日志保留错误与数量/ID 汇总、去除重复记录。按 3.2.5 验证完整约束残差和 LMP 有限差分后再推广。
+
+#### 3.2.5 验证与逐步实施
 
 在生成全部标签之前，使用一个小规模算例和固定的样本子集检查：
 
-- 定价 LP 的状态为 `OPTIMAL`，且调度出力满足功率平衡、发电机、
-  爬坡、基态潮流和预想故障潮流约束；
-- LMP 的形状严格为 `[N, T]`，发电出力的形状严格为 `[G, T]`，所有值均为有限值，
-  且单位一致；
+- 定价 LP 的状态为 `OPTIMAL`，且调度出力满足功率平衡、发电机、爬坡、基态潮流和预想故障潮流约束；
+- LMP 的形状严格为 `[N, T]`，发电出力的形状严格为 `[G, T]`，所有值均为有限值，且单位一致；
 - 无拥塞时段所有母线的 LMP 在容差范围内相同；
-- 对于选定的 `(母线, 时段)` 对，在保持相同开停机决策的情况下，将负荷增加
-  一个很小的 `epsilon`，定价目标函数值的变化约为
-  `LMP[bus,period] * epsilon`（在远离基发生变化的位置使用单侧测试）；
-- 连续两次补充标签具有幂等性，写入中断不会损坏样本，
-  且数据处理保留样本数量和原始划分；
-- 短程过拟合测试能够同时降低 UC 和 LMP 损失，随后使用 UC 准确率/变量固定指标
-  以及 LMP MAE/RMSE，对仅使用 UC 与使用 UC+LMP 进行比较。
+- 对于选定的 `(母线, 时段)` 对，在保持相同开停机决策的情况下，将负荷增加一个很小的 `epsilon`，定价目标函数值的变化约为 `LMP[bus,period] * epsilon`（在远离基发生变化的位置使用单侧测试）；
+- 连续两次补充标签具有幂等性，写入中断不会损坏样本，且数据处理保留样本数量和原始划分；
+- 短程过拟合测试能够同时降低 UC 和 LMP 损失，随后使用 UC 准确率/变量固定指标以及 LMP MAE/RMSE，对仅使用 UC 与使用 UC+LMP 进行比较。
 
-按以下顺序逐步实施：定价/单元测试、case5 标签补充与训练冒烟测试、
-一个较大算例的样本子集，然后是全部已有数据集。如果定价规则或有限差分验证
-发生变化，应停止批量生成，而不是静默接受标签。
+按以下顺序逐步实施：定价/单元测试、case5 标签补充与训练冒烟测试、一个较大算例的样本子集，然后是全部已有数据集。如果定价规则或有限差分验证发生变化，应停止批量生成，而不是静默接受标签。
 
-### 3.3 Topo & Scuc Together
+### 3.3 学习线路拥堵任务
+
+TBD
+
+### 3.4 模型训练与样本生成同步进行
+
+TBD
+
+### 3.5 Topo & Scuc Together
 
 TBD
 
