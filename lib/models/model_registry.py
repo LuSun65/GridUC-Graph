@@ -9,6 +9,7 @@ from lib.models.model_input import STGCNInput
 from lib.models.v2.stgcn_v2 import STGCN_V2, STGCNV2Config
 from lib.models.v2.stgcn_v2_1 import STGCN_V2_1, STGCNV21Config
 from lib.models.v2.stgcn_v2_2 import STGCN_V2_2, STGCNV22Config
+from lib.models.v3.stgcn_v3 import STGCN_V3, STGCNV3Config
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "stgcn_v2.2": ModelSpec(
         STGCN_V2_2, STGCNV22Config, "2.2", prenorm_warmup=True
     ),
+    "stgcn_v3": ModelSpec(STGCN_V3, STGCNV3Config, "3.0"),
 }
 
 # Old experiment names remain readable, but new runs should use canonical names.

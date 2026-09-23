@@ -1,1 +1,1 @@
-"""Reserved for the planned ESA model; not yet implemented."""
+"""V3 ESA model interfaces; computation is not implemented yet."""
