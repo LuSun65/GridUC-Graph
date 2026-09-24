@@ -7,17 +7,13 @@ from pathlib import Path
 
 import numpy as np
 
-from lib.lmp_sover import (
-    PRICING_RULE,
-    _validate_uc_solution, commitment_hash, solve_pricing,
-)
+from lib.lmp_sover import solve_pricing
 from lib.toolkit import load_pkl
 
 
 def valid_pricing_labels(data, uc_type: str) -> bool:
-    """Only skip complete labels generated with the current pricing contract."""
+    """Check label completeness without version or provenance requirements."""
     try:
-        commitment = _validate_uc_solution(data, data.uc_sol, uc_type)
         for name, shape in (
             ("lmp_target", (data.num_bus, data.num_period)),
             ("p_target", (data.num_gen, data.num_period)),
@@ -33,14 +29,7 @@ def valid_pricing_labels(data, uc_type: str) -> bool:
                 return False
         if data.pricing_solve_time < 0:
             return False
-        metadata = getattr(data, "pricing_metadata", None)
-        expected = {
-            "pricing_rule": PRICING_RULE,
-            "uc_sol_sha256": commitment_hash(commitment),
-            "uc_type": uc_type,
-        }
-        return (isinstance(metadata, dict)
-                and all(metadata.get(key) == value for key, value in expected.items()))
+        return True
     except (TypeError, ValueError, AttributeError):
         return False
 

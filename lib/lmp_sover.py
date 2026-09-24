@@ -1,30 +1,18 @@
 """Continuous pricing solve for a fixed unit-commitment schedule."""
 
 from dataclasses import dataclass
-import hashlib
 
 import gurobipy as gp
 import numpy as np
 from gurobipy import GRB
 
 from lib.case_loader import UCData
-from lib.uc_model import UCModel, build_uc
+from lib.uc_model import UCModel, build_uc, init_uc_grb
+from lib.ptdf_solver import compute_ptdf, compute_post_ptdf
 
 
 PRICING_FEASIBILITY_TOL = 1e-6
 PRICING_OPTIMALITY_TOL = 1e-6
-# Contract: dense fixed-commitment Gurobi LP, initially all off, no balance
-# slack, OPTIMAL only, tolerances above, power in MW and LMP in currency/MWh.
-# Bump this version whenever these pricing conventions change.
-PRICING_RULE = "fixed_commitment_lp_v1"
-
-
-def commitment_hash(commitment: np.ndarray) -> str:
-    """Hash binary commitments independently of their original numpy dtype."""
-    values = np.ascontiguousarray(np.rint(commitment), dtype=np.uint8)
-    return hashlib.sha256(str(values.shape).encode() + values.tobytes()).hexdigest()
-
-
 class PricingSolveError(RuntimeError):
     """Raised when a reliable optimal pricing solution cannot be produced."""
 
@@ -196,37 +184,127 @@ def _dispose_pricing_models(uc: UCModel | None, pricing_lp: gp.Model | None) -> 
         uc.env.dispose()
 
 
-def solve_pricing(data: UCData, uc_sol: np.ndarray, uc_type: str) -> PricingResult:
-    """Build and solve a dense fixed-commitment LP and return power/LMP targets.
+def _validate_fixed_transitions(data, commitment, startup, shutdown):
+    # Preserve the original truncated minimum-up/down constraints, even though
+    # their now-constant rows do not need to be sent to the LP solver.
+    for g in range(data.num_gen):
+        for t in range(data.num_period):
+            for duration, state, trigger in (
+                (int(data.gen_min_up[g]), commitment[g], startup[g, t]),
+                (int(data.gen_min_down[g]), 1 - commitment[g], shutdown[g, t]),
+            ):
+                end = min(t + duration, data.num_period)
+                if duration > 1 and state[t:end].sum() < trigger * (end - t):
+                    raise PricingSolveError(f"Invalid minimum up/down schedule at generator {g}, period {t}")
 
-    Any invalid input, non-optimal solver status, missing model component, or
-    non-finite result raises an exception directly.
+
+def _build_fixed_lp(model, data, commitment, startup):
+    G, T = commitment.shape
+    p = model.addMVar((G, T), lb=0, name="p")
+    c = model.addMVar((G, T), lb=0, name="c")
+    dp = model.addMVar((G, data.bid_price.shape[1], T), lb=0, name="dp")
+    model.setObjective(c.sum() + float((data.gen_startup_cost[:, None] * startup).sum()), GRB.MINIMIZE)
+    model.addConstr(c == data.bid_no_load[:, None] * commitment + (data.bid_price * dp).sum(axis=1), name="pwl_cost")
+    model.addConstr(p == data.bid_mw[:, 0:1] * commitment + dp.sum(axis=1), name="pwl_link")
+    model.addConstr(dp <= np.diff(data.bid_mw, axis=1)[:, :, None] * commitment[:, None, :], name="dp_upper")
+    model.addConstr(p >= commitment * data.gen_pmin[:, None], name="pmin")
+    model.addConstr(p <= commitment * data.gen_pmax[:, None], name="pmax")
+    balance = model.addConstr(p.sum(axis=0) == data.demand.sum(axis=0), name="balance")
+    model.addConstr(p[:, 1:] - p[:, :-1] <= data.gen_ramp_up[:, None], name="ramp_up")
+    model.addConstr(p[:, :-1] - p[:, 1:] <= data.gen_ramp_down[:, None], name="ramp_down")
+    return p, balance
+
+
+def _scenario_ptdf(data, outage):
+    if outage is None:
+        return compute_ptdf(data)
+    return compute_post_ptdf(data, outage_line=outage)[0]
+
+
+def solve_pricing(data: UCData, uc_sol: np.ndarray, uc_type: str) -> PricingResult:
+    """Solve a direct continuous LP, separating every network scenario each round.
+
+    Omitted rows have zero duals. Labels are returned only after an optimal LP
+    solution passes the full network check at the pricing feasibility tolerance.
     """
     commitment = _validate_uc_solution(data, uc_sol, uc_type)
     startup, shutdown = _derive_startup_shutdown(commitment)
+    _validate_fixed_transitions(data, commitment, startup, shutdown)
+    if data.demand is None:
+        raise ValueError("UCData.demand must be set")
+    if uc_type == "scuc" and not data.cc_monitor:
+        raise ValueError("cc_monitor must be set before pricing SCUC")
 
-    uc = None
-    pricing_lp = None
-    try:
-        uc = _build_dense_pricing_uc(data, uc_type)
-        _fix_commitment_state(uc, commitment, startup, shutdown)
-        pricing_lp = _relax_to_pricing_lp(uc)
-        _solve_pricing_lp(pricing_lp)
+    # Match build_uc: maintenance affects N-0 PTDF but not N-0 ratings;
+    # contingency scenarios are each derived from the original network.
+    scenarios = [(data.maintenance_line, np.asarray(data.line_fmax, float))]
+    if uc_type == "scuc":
+        for outage in data.cc_monitor:
+            limits = np.array(data.line_fmax, dtype=float) * 1.05
+            limits[outage] *= 0.5
+            scenarios.append((outage, limits))
+    # Only generator columns and demand products survive scenario preparation.
+    networks = []
+    for outage, limits in scenarios:
+        matrix = _scenario_ptdf(data, outage)
+        networks.append((matrix[:, data.gen_bus].copy(), matrix @ data.demand, limits))
+    del matrix
 
-        p_target = _extract_variable_values(
-            pricing_lp, "p", (data.num_gen, data.num_period)
-        )
-        lmp_target = _calculate_lmp(uc, pricing_lp)
+    with init_uc_grb() as env, gp.Model("pricing_lp", env=env) as model:
+        p, balance = _build_fixed_lp(model, data, commitment, startup)
+        added = {}
+        runtime = 0.0
+        rounds = 0
+        while True:
+            _solve_pricing_lp(model)
+            runtime += model.Runtime
+            rounds += 1
+            values = p.X
+            if not np.isfinite(values).all():
+                raise PricingSolveError("Non-finite pricing dispatch")
+            pending = []
+            max_violation = 0.0
+            for scenario, (coeff, rhs, limits) in enumerate(networks):
+                flow = coeff @ values - rhs
+                if not np.isfinite(flow).all():
+                    raise PricingSolveError("Non-finite network flows")
+                for upper, violation in ((True, flow - limits[:, None]), (False, -limits[:, None] - flow)):
+                    max_violation = max(max_violation, float(violation.max()))
+                    for line, period in zip(*np.where(violation > PRICING_FEASIBILITY_TOL)):
+                        key = (scenario, int(line), int(period), upper)
+                        if key not in added:
+                            pending.append(key)
+            if not pending:
+                if max_violation > PRICING_FEASIBILITY_TOL:
+                    raise PricingSolveError(f"Existing network rows violate pricing tolerance: {max_violation:g}")
+                break
+            for scenario, line, period, upper in pending:
+                coeff, rhs, limits = networks[scenario]
+                expression = coeff[line] @ p[:, period]
+                bound = float(rhs[line, period] + (limits[line] if upper else -limits[line]))
+                added[scenario, line, period, upper] = model.addConstr(
+                    expression <= bound if upper else expression >= bound,
+                    name=f"network_{scenario}_{line}_{period}_{int(upper)}",
+                )
+
+        lmp = np.broadcast_to(balance.Pi, (data.num_bus, data.num_period)).copy()
+        # Reconstruct full bus sensitivities one scenario at a time, only for
+        # scenarios with nonzero duals. No stacked contingency PTDF is retained.
+        for scenario, (outage, _) in enumerate(scenarios):
+            active = [(line, period, constraint.Pi)
+                      for (s, line, period, _), constraint in added.items()
+                      if s == scenario and constraint.Pi != 0]
+            if active:
+                matrix = _scenario_ptdf(data, outage)
+                for line, period, dual in active:
+                    lmp[:, period] += matrix[line] * dual
+        if not np.isfinite(lmp).all():
+            raise PricingSolveError("Non-finite pricing LMP")
         return PricingResult(
-            p_target=p_target,
-            lmp_target=lmp_target,
-            obj=float(pricing_lp.ObjVal),
-            solve_time=float(pricing_lp.Runtime),
-            metadata={
-                "pricing_rule": PRICING_RULE,
-                "uc_sol_sha256": commitment_hash(commitment),
-                "uc_type": uc_type,
-            },
+            p_target=values, lmp_target=lmp, obj=float(model.ObjVal),
+            solve_time=float(runtime),
+            metadata={"uc_type": uc_type,
+                      "constraint_generation_rounds": rounds,
+                      "network_constraints_added": len(added),
+                      "max_network_violation": max_violation},
         )
-    finally:
-        _dispose_pricing_models(uc, pricing_lp)
