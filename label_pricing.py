@@ -3,6 +3,8 @@
 import argparse
 from datetime import datetime
 import logging
+import multiprocessing
+import os
 import sys
 import time
 from pathlib import Path
@@ -10,6 +12,17 @@ from pathlib import Path
 from lib import lmp_sover
 from lib.label_pricing import label_sample
 from lib.toolkit import load_pkl
+
+
+def _label_one(args):
+    path, uc_type, overwrite = args
+    started = time.monotonic()
+    try:
+        status = label_sample(path, uc_type, overwrite=overwrite)
+    except Exception as error:
+        reason = f"{type(error).__name__}: {error}"
+        return path, None, time.monotonic() - started, reason
+    return path, status, time.monotonic() - started, None
 
 # dir example: /home/npg0/Sunlu/GridUC-Graph/data/case5/samples/tcuc
 # command example: python label_pricing.py --sample-path /home/npg0/Sunlu/GridUC-Graph-v2/samples/fail.pkl --overwrite
@@ -71,6 +84,7 @@ def main():
     failed = []
     saved = skipped = 0
     started = time.monotonic()
+    workers = min(os.cpu_count() or 1, len(samples))
     try:
         logger.info("Log: %s", log_path)
         logger.info("Data read directory: %s", args.sample_dir)
@@ -81,21 +95,25 @@ def main():
         logger.info("START version=%s uc_type=%s overwrite=%s samples=%s",
                     version, uc_type, args.overwrite,
                     [path.stem for path in samples])
-        for index, path in enumerate(samples, 1):
-            sample_started = time.monotonic()
-            logger.info("[%d/%d] PROCESSING sample %s", index, len(samples), path.stem)
-            try:
-                status = label_sample(path, uc_type, overwrite=args.overwrite)
-            except Exception as error:
-                reason = f"{type(error).__name__}: {error}"
-                failed.append(path)
-                logger.error("FAILED sample %s (%.3fs): %s", path.stem,
-                             time.monotonic() - sample_started, reason)
-            else:
-                saved += status == "saved"
-                skipped += status == "skipped"
-                logger.info("%s sample %s (%.3fs)", status.upper(), path.stem,
-                            time.monotonic() - sample_started)
+        logger.info("Using %d worker processes (detected CPUs=%d)",
+                    workers, os.cpu_count() or 1)
+        tasks = ((path, uc_type, args.overwrite) for path in samples)
+        with multiprocessing.get_context("spawn").Pool(workers) as pool:
+            for index, (path, status, elapsed, error) in enumerate(
+                pool.imap_unordered(_label_one, tasks), 1
+            ):
+                logger.info("[%d/%d] FINISHED sample %s",
+                            index, len(samples), path.stem)
+                if error is not None:
+                    reason = error
+                    failed.append(path)
+                    logger.error("FAILED sample %s (%.3fs): %s", path.stem,
+                                 elapsed, reason)
+                else:
+                    saved += status == "saved"
+                    skipped += status == "skipped"
+                    logger.info("%s sample %s (%.3fs)", status.upper(), path.stem,
+                                elapsed)
         logger.info("FINISHED total=%d saved=%d skipped=%d failed=%d elapsed=%.3fs",
                     len(samples), saved, skipped, len(failed), time.monotonic() - started)
         logger.info("Failed sample IDs: %s", ", ".join(path.stem for path in failed) or "none")
