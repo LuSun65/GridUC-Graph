@@ -297,7 +297,7 @@ By default, all samples are processed and valid labels are skipped; `--sample-id
 
 扩展 `STGCNInput`、`concat_stgcn_inputs`、`STGCNDataset`、collate 函数以及处理后数据的验证逻辑，加入：
 
-- `lmp_target [B, N, T]` 及可选的有效性掩码；
+- `lmp_target [B, N, T]`，所有节点、时段的电价标签均参与损失和统计计算；
 - 检查所选任务的标签是否齐全，缺失时提示补充。
 - 为处理后的数据增加格式版本，并随模型保存任务配置和归一化参数。
 - 仅用训练集计算电价均值和标准差，供训练、验证、测试及预测统一使用。
