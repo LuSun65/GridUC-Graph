@@ -15,30 +15,30 @@ if __name__ == "__main__":
     run_all(
         # Shared.
         case="case2383",
-        stages=["sample",],
-        uc_types=("tcuc", "scuc"),
+        stages=["process", "train"],
+        uc_types=("tcuc", "topo", "scuc"),
         input_root=LOCAL_INPUT_ROOT,
         output_root=PROJECT_ROOT,
-        run_id="samples",
+        run_id="checkpoints-v2",
 
         # Train / test / summary.
-        models=("stgcn-v2.2", "stgcn_v2", "stgcn_v1", "mlp"),
+        models=("multitask",),
 
         # Train / test.
         device="cuda",
 
         # Sample.
         n_samples=1000,
-        sample_solver="dense",
+        sample_solver="lazy",
         workers=4,
 
         # Train.
         epochs=50,
-        batch_size=1,
+        batch_size=16,
         train_devices=("cuda:0", "cuda:1", "cuda:2", "cuda:3"),
 
         # Test.
         n_test=20,
-        test_solver="dense",
+        test_solver="lazy",
         checkpoint_run_id='checkpoints',
     )
