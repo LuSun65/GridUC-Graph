@@ -98,9 +98,9 @@ test: add v1-v2 comparison workflow
 
 ## 4. 模型源码隔离
 
-### 4.1 按模型版本组织源码
+### 4.1 按模型家族组织源码
 
-模型统一从 `lib.models` 导入，按版本集中存放；旧顶层模型路径及 `lib/layers/` 已移除，不提供兼容导出。
+模型统一从 `lib.models` 导入，按模型家族集中存放；旧顶层模型路径及 `lib/layers/` 已移除，不提供兼容导出。
 
 ```text
 lib/models/
@@ -108,12 +108,13 @@ lib/models/
 ├── model_registry.py    # 统一模型注册
 ├── mlp.py
 ├── common/              # 跨版本共享基础层
-├── v1/                  # V1 模型和专属模块
-├── v2/                  # V2、V2.1、V2.2 模型和专属模块
-└── v3/                  # ESA 预留目录
+├── stgcn/               # V1：原始 STGCN
+├── stgcn_attn/          # V2、V2.1、V2.2：Attention 系列
+├── esa/                 # V3：ESA 接口，计算尚未实现
+└── multitask/           # V4：共享 V1 编码器的 UC/LMP 多任务模型
 ```
 
-配置 dataclass 与实现同文件。复用的 V1 分支可直接从 `v1/` 导入，共享算子从 `common/` 导入。数据加载器和模型直接使用 `model_input.py` 中的共享输入类型。预处理数据按当前代码生成，不提供旧类路径兼容。
+配置 dataclass 与实现同文件。复用的 V1 分支可直接从 `stgcn/` 导入，共享算子从 `common/` 导入。数据加载器和模型直接使用 `model_input.py` 中的共享输入类型。预处理数据按当前代码生成，不提供旧类路径兼容。
 
 ### 4.2 复用原则
 
@@ -125,23 +126,27 @@ lib/models/
 
 ### 4.3 模型注册
 
-trainer 和 tester 应通过明确的模型名称加载不同架构：
+注册表位于 `lib/models/model_registry.py`，对应规则如下：
 
-```python
-MODEL_CLASSES = {
-    "mlp": MLP,
-    "stgcn_v1": STGCN,
-    "stgcn_v2": STGCNV2,
-}
-```
+| 版本 | 目录 | 注册名称 | 别名 |
+|---|---|---|---|
+| 基线 | `mlp.py` | `mlp` | — |
+| V1 | `stgcn/` | `stgcn_v1` | `stgcn` |
+| V2.0 | `stgcn_attn/` | `stgcn_v2` | `stgcn_attn`、`stgcn-v2` |
+| V2.1 | `stgcn_attn/` | `stgcn_v2.1` | `stgcn-v2.1` |
+| V2.2 | `stgcn_attn/` | `stgcn_v2.2` | `stgcn-v2.2` |
+| V3 | `esa/` | `stgcn_v3` | `esa` |
+| V4 | `multitask/` | `stgcn_v1_mtl` | `multitask`、`stgcn_v4` |
 
-迁移期间可保留旧名称作为兼容别名：
+`stgcn_attn` 固定对应 V2.0；V2.1、V2.2 需明确使用对应的注册名称或别名。
 
-```python
-"stgcn": STGCN  # legacy alias，等价于 stgcn_v1
-```
-
-这样 V1 和 V2 可以在一次测试运行中同时加载，而不需要切换 Git 分支来比较结果。
+目录改名不改变模型计算、现有注册名称或检查点架构版本。V4 是模型家族编号；
+其 `architecture_version` 仍为 `1.0`，保持现有多任务检查点的元数据兼容。
+Python 导入使用新目录路径；不提供旧 `lib.models.v1/v2/v3` 包路径兼容。
+以配置字典和 `state_dict` 保存的检查点不依赖这些旧包路径；直接 pickle
+旧配置对象或整个模型的产物需要在旧环境转存为配置字典和 `state_dict`。
+产物文件名仍使用调用方传入的模型名称，保存和加载应使用同一名称；
+`stgcn_v4` 别名不会自动查找名为 `stgcn_v1_mtl.pt` 的文件。
 
 ## 5. 数据和实验产物隔离
 
@@ -406,7 +411,8 @@ model-v1.0.0                 # 当前基线
 model-v2.0.0-fusion-attn     # Fusion Attention
 model-v2.1.0-dynamic-attn    # Dynamic Attention
 model-v2.2.0-node-features   # 新节点特征
-model-v3.0.0-multitask       # 输出接口发生较大变化
+model-v3.0.0-esa             # ESA（实现后发布）
+model-v4.0.0-multitask       # UC/LMP 多任务模型家族
 ```
 
 ## 11. 后续操作原则

@@ -1,6 +1,6 @@
 import torch
 
-from lib.models.v1.stgcn import STGCN
+from lib.models.stgcn.stgcn import STGCN
 from .module_fusion import MultitaskFusion
 
 

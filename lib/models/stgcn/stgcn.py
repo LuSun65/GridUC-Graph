@@ -3,60 +3,43 @@ import torch.nn as nn
 from dataclasses import dataclass
 
 from lib.models.model_input import STGCNInput
+
 from lib.models.model_input import StaticGraph
-from lib.models.v1.module_static import StaticModule, StaticModuleConfig
-from lib.models.v1.module_dync import DyncModule, DyncModuleConfig
+from lib.models.stgcn.module_static import StaticModule, StaticModuleConfig
+from lib.models.stgcn.module_dync import DyncModule, DyncModuleConfig
 from lib.models.model_input import DyncGraph
+from lib.models.stgcn.module_fusion import FusionModule, FusionModuleConfig
 from lib.models.model_input import FusionGraph
-from lib.models.v2.module_fusion_attention import (
-    AttentionFusionModule,
-    AttentionFusionModuleConfig,
-)
 
 
 @dataclass
-class STGCNV2Config:
-    n_node: int
-    n_gen: int
-    n_period: int
-    f_node_s: int
-    f_node_d: int
-    f_edge: int
-    f_hidden: int = 64
-    n_layers: int = 2
-    k_t: int = 3
-    attention_heads: int = 4
-    attention_dropout: float = 0.0
-    attention_negative_slope: float = 0.2
+class STGCNConfig:
+    n_node:   int        # number of buses
+    n_gen:    int        # number of generators
+    n_period: int        # number of time steps
+    f_node_s: int        # static branch node feature dim (generator features)
+    f_node_d: int        # dynamic branch node feature dim
+    f_edge:   int        # edge feature dim
+    f_hidden: int = 64      # hidden channels throughout
+    n_layers: int = 2       # MLP depth in static edge_mlp and fusion MLPs
+    k_t:      int = 3       # temporal kernel size
+    k_s:      int = 3       # Chebyshev order
 
 
-class STGCN_V2(nn.Module):
+class STGCN(nn.Module):
     """
     Spatio-Temporal Graph Convolutional Network for UC prediction.
 
-    Static branch (NNConv) + Dynamic branch (ST-Conv)
-    -> Fusion graph attention -> [B, G, T]
+    Static branch (NNConv)  +  Dynamic branch (ST-Conv)  ->  Fusion  ->  [B, G, T]
 
     input:  STGCNInput
     output: [B, G, n_period]  — logits (training) or sigmoid probs (eval)
     """
 
-    def __init__(self, config: STGCNV2Config):
+    fusion_type = FusionModule
+
+    def __init__(self, config: STGCNConfig):
         super().__init__()
-        # Keep the in-progress trainer compatible with a V1 STGCNConfig while
-        # ensuring V2 checkpoints always store the complete V2 configuration.
-        if not isinstance(config, STGCNV2Config):
-            config = STGCNV2Config(
-                n_node=config.n_node,
-                n_gen=config.n_gen,
-                n_period=config.n_period,
-                f_node_s=config.f_node_s,
-                f_node_d=config.f_node_d,
-                f_edge=config.f_edge,
-                f_hidden=config.f_hidden,
-                n_layers=config.n_layers,
-                k_t=config.k_t,
-            )
         self.config = config
 
         self.static_branch = StaticModule(StaticModuleConfig(
@@ -77,26 +60,24 @@ class STGCN_V2(nn.Module):
             k_t      = config.k_t,
         ))
 
-        fusion_cfg = AttentionFusionModuleConfig(
+        fusion_cfg = FusionModuleConfig(
             n_node   = config.n_node,
             n_gen    = config.n_gen,
             n_period = config.n_period,
             f_in     = config.f_hidden,
             f_hidden = config.f_hidden,
+            k_s      = config.k_s,
             n_layers = config.n_layers,
-            n_heads  = config.attention_heads,
-            attention_dropout = config.attention_dropout,
-            attention_negative_slope = config.attention_negative_slope,
         )
-        self.fusion = AttentionFusionModule(fusion_cfg)
+        self.fusion = self.fusion_type(fusion_cfg)
 
     @classmethod
-    def default_config(cls, data: STGCNInput) -> STGCNV2Config:
-        """Infer dimensions from input data and retain V2 hyperparameter defaults."""
+    def default_config(cls, data: STGCNInput) -> STGCNConfig:
+        """Infer STGCNConfig dimensions from a batched STGCNInput, keeping all hyperparams at defaults."""
         B, G, f_node_s = data.node_feat_s.shape
         B, T, N, f_node_d = data.node_feat_d.shape
         f_edge = data.edge_attr.shape[-1]
-        return STGCNV2Config(
+        return STGCNConfig(
             n_node      = N,
             n_gen       = G,
             n_period    = T,

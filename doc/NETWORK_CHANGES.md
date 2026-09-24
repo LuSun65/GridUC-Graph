@@ -1,8 +1,14 @@
 # Network Changes
 
+Model family mapping: V1 → `lib/models/stgcn/`; V2/V2.1/V2.2 →
+`lib/models/stgcn_attn/`; V3 → `lib/models/esa/`; V4 → `lib/models/multitask/`.
+See [the registry mapping table](README.md#model-directories-and-versions) for
+canonical names and aliases. V3 remains an interface skeleton; V4 is the
+implemented UC/LMP multitask model.
+
 ## 1. Previous Architecture
 
-The current STGCN implementation is defined mainly in `lib/models/v1/stgcn.py`, with version-specific modules under `lib/models/v1/` and shared layers under `lib/models/common/`.
+The current STGCN implementation is defined mainly in `lib/models/stgcn/stgcn.py`, with version-specific modules under `lib/models/stgcn/` and shared layers under `lib/models/common/`.
 
 ### 1.1 Input Representation
 
@@ -57,7 +63,7 @@ The input dimensions and top-level configuration parameters correspond as follow
 
 ### 1.3 Static Branch
 
-The static branch is implemented by `StaticModule` in `lib/models/v1/module_static.py`. It converts generator-level static features into bus-level static graph embeddings.
+The static branch is implemented by `StaticModule` in `lib/models/stgcn/module_static.py`. It converts generator-level static features into bus-level static graph embeddings.
 
 ```text
 node_feat_s [B, G, F_node_s]
@@ -106,7 +112,7 @@ The two `NNConvLayer` blocks are edge-conditioned graph convolutions. Each block
 
 ### 1.4 Dynamic Branch
 
-The dynamic branch is implemented by `DyncModule` in `lib/models/v1/module_dync.py`. It converts bus-level time-series features into one dynamic embedding per bus.
+The dynamic branch is implemented by `DyncModule` in `lib/models/stgcn/module_dync.py`. It converts bus-level time-series features into one dynamic embedding per bus.
 
 ```text
 node_feat_d [B, T, N, F_node_d]
@@ -150,7 +156,7 @@ The temporal convolutions preserve the time dimension with causal padding. The `
 
 ### 1.5 Fusion Branch
 
-The fusion branch is implemented by `FusionModule` in `lib/models/v1/module_fusion.py`. It combines static and dynamic bus embeddings, then converts bus-level features back to generator-level time predictions.
+The fusion branch is implemented by `FusionModule` in `lib/models/stgcn/module_fusion.py`. It combines static and dynamic bus embeddings, then converts bus-level features back to generator-level time predictions.
 
 ```text
 x_static [B, N, H] + x_dynamic [B, N, H]
@@ -232,7 +238,7 @@ V2.2 also includes the following stability changes:
 2. NNConv, ChebConv, and GAT use normalized residual blocks, such as `x = LayerNorm(x + alpha * GraphConv(x))`. The residual branch uses a linear projection when the input and output dimensions differ.
 3. NNConv uses a degree-normalized sum or mean for neighbor aggregation to limit layer-by-layer growth in activation magnitude.
 
-### 2.2 Multi-Task Learning
+### 2.2 Multi-Task Learning (V4)
 
 #### 2.2.1 Generating Local Marginal Price Labels
 

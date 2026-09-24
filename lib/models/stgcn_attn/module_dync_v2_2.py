@@ -5,7 +5,7 @@ import torch.nn as nn
 
 from lib.models.common.layer_mlp import MLPConfig, MLPLayer
 from lib.models.common.layer_pre_norm import PreNormLayer
-from lib.models.v2.layer_st_conv_v2_2 import STConvBlockV2_2, STConvV22Config
+from lib.models.stgcn_attn.layer_st_conv_v2_2 import STConvBlockV2_2, STConvV22Config
 from lib.models.model_input import DyncGraph
 
 

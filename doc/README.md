@@ -35,7 +35,7 @@ GE-Sampling/
 │   ├── uc_model.py      # Gurobi modeling and solving: build_uc(data, uc_type, mode) + solve_uc
 │   ├── sampler.py       # sampling: sample_uc for a single sample, run_sampling for batches (multiprocessing / resumable)
 │   ├── data_loader.py   # UCData -> STGCNInput conversion, chunked preprocessing, DataLoader
-│   ├── models/          # models grouped under v1/, v2/, v3/; shared layers in common/
+│   ├── models/          # model families: stgcn/, stgcn_attn/, esa/, multitask/
 │   │   └── mlp.py       # MLP baseline model
 │   ├── trainer.py       # unified training entry train_model("stgcn"|"mlp", ...)
 │   ├── tester.py        # test case generation, accelerated-solve evaluation, result storage, summary table printing
@@ -51,6 +51,29 @@ GE-Sampling/
 ```
 
 There is no CLI. The whole pipeline runs inside a single Python process by calling `lib.runner.run_all` from `run_<case>.py`.
+
+## Model directories and versions
+
+| Version | Source directory | Canonical registry name | Description |
+|---|---|---|---|
+| Baseline | `lib/models/mlp.py` | `mlp` | MLP baseline |
+| V1 | `lib/models/stgcn/` | `stgcn_v1` | Original STGCN; `stgcn` is an alias |
+| V2.0 | `lib/models/stgcn_attn/` | `stgcn_v2` | Fusion attention; `stgcn_attn` is an alias |
+| V2.1 | `lib/models/stgcn_attn/` | `stgcn_v2.1` | Dynamic and fusion attention |
+| V2.2 | `lib/models/stgcn_attn/` | `stgcn_v2.2` | Deeper network with residual blocks |
+| V3 | `lib/models/esa/` | `stgcn_v3` | ESA interfaces; `esa` is an alias; computation is not implemented |
+| V4 | `lib/models/multitask/` | `stgcn_v1_mtl` | Shared V1 encoder with UC/LMP heads; `multitask` and `stgcn_v4` are aliases |
+
+`stgcn_attn` always selects V2.0; select `stgcn_v2.1` or `stgcn_v2.2` explicitly for those variants.
+
+Directories describe model families: former `v1/`, `v2/`, and `v3/` are now
+`stgcn/`, `stgcn_attn/`, and `esa/`. The `multitask/` directory is V4.
+Use these new package paths for Python imports. Existing registry names and
+checkpoint architecture versions remain unchanged. In particular, V4 keeps
+`architecture_version="1.0"`: its family number does not change its weights.
+Checkpoint and result filenames use the model name supplied by the caller, so
+use the same name when saving and loading (`stgcn_v4` and `stgcn_v1_mtl` resolve
+to the same model but name different artifact files).
 
 ## Environment
 

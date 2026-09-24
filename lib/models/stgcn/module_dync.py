@@ -6,7 +6,7 @@ from lib.models.model_input import DyncGraph
 
 from lib.models.common.layer_pre_norm import PreNormLayer
 from lib.models.common.layer_mlp import MLPLayer, MLPConfig
-from lib.models.v1.layer_st_conv import STConvBlock, STConvConfig
+from lib.models.stgcn.layer_st_conv import STConvBlock, STConvConfig
 
 
 @dataclass

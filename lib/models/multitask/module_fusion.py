@@ -1,4 +1,4 @@
-from lib.models.v1.module_fusion import FusionModule
+from lib.models.stgcn.module_fusion import FusionModule
 from .task_heads import LMPHead, STGCNOutput, UCHead
 
 

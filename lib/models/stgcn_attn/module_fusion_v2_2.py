@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 
-from lib.models.v2.layer_graph_attention import (
+from lib.models.stgcn_attn.layer_graph_attention import (
     GraphAttentionConfig,
     GraphAttentionLayer,
 )
