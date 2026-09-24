@@ -226,7 +226,7 @@ def run_test(case, uc_types, models, paths, n_test=20, mode="dense", device="cpu
 
 
 def run_summary(case, paths, uc_types=("tcuc", "topo", "scuc"),
-                models=("mlp", "stgcn_v1")):
+                models=("mlp", "stgcn")):
     failed = []
     ok = _run_task(f"summary {case}", lambda: (
         setlog(paths.log_path(case, "summary", "summary.log"), overwrite=True),
@@ -242,7 +242,7 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             device="cpu", workers=None, random_seed=42,
             sample_solver="dense", test_solver="dense",
             uc_types=("tcuc", "topo", "scuc"),
-            models=("stgcn_v2", "stgcn_v1", "mlp"), *,
+            models=("stgcn_attn_0", "stgcn", "mlp"), *,
             input_root="data", output_root=".", run_id: str,
             processed_path=None, process_chunk_size=200, train_ratio=0.8,
             train_devices=None, checkpoint_run_id=None,
@@ -268,8 +268,9 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
         checkpoint_run_id=checkpoint_run_id,
     )
     print(f"[paths] input_root={paths.input_root}")
-    print(f"[paths] run_root={paths.run_root}")
-    print(f"[paths] checkpoint_run_root={paths.checkpoint_run_root}")
+    print(f"[paths] data_root={paths.output_case_root(case)}")
+    print(f"[paths] log_root={paths.log_path(case)}")
+    print(f"[paths] benchmark_root={paths.output_case_root(case) / 'benchmarks'}")
     generated_processed = "process" in stages
 
     all_failed = []

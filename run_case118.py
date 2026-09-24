@@ -22,7 +22,7 @@ if __name__ == "__main__":
         run_id="samples",
 
         # Train / test / summary.
-        models=("stgcn_v2", "stgcn_v1", "mlp"),
+        models=("stgcn_attn_0", "stgcn", "mlp"),
 
         # Train / test.
         device="cuda",

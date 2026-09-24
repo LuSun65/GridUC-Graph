@@ -21,51 +21,44 @@ class ModelSpec:
     prenorm_warmup: bool = False
 
 
-# Family/version -> source directory -> canonical model_type:
-# V1       -> stgcn/      -> stgcn_v1
-# V2/2.1/2.2 -> stgcn_attn/ -> stgcn_v2 / stgcn_v2.1 / stgcn_v2.2
-# V3       -> esa/        -> stgcn_v3 (interface only)
-# V4       -> multitask/  -> stgcn_v1_mtl (alias: stgcn_v4)
-# V4 retains its existing name and checkpoint architecture_version="1.0";
-# the family label changes neither its V1 encoder nor its serialized weights.
+# Names match model families; architecture_version describes checkpoint schemas.
 MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "mlp": ModelSpec(MLP, MLPConfig, "1.0"),
-    "stgcn_v1": ModelSpec(STGCN, STGCNConfig, "1.0", prenorm_warmup=True),
-    "stgcn_v1_mtl": ModelSpec(
-        STGCN_V1_Multitask, STGCNConfig, "1.0", prenorm_warmup=True
-    ),
-    "stgcn_v2": ModelSpec(STGCN_V2, STGCNV2Config, "2.0", prenorm_warmup=True),
-    "stgcn_v2.1": ModelSpec(
-        STGCN_V2_1, STGCNV21Config, "2.1", prenorm_warmup=True
-    ),
-    "stgcn_v2.2": ModelSpec(
-        STGCN_V2_2, STGCNV22Config, "2.2", prenorm_warmup=True
-    ),
-    "stgcn_v3": ModelSpec(STGCN_V3, STGCNV3Config, "3.0"),
+    "stgcn": ModelSpec(STGCN, STGCNConfig, "1.0", prenorm_warmup=True),
+    "stgcn_attn_0": ModelSpec(STGCN_V2, STGCNV2Config, "2.0", prenorm_warmup=True),
+    "stgcn_attn_1": ModelSpec(STGCN_V2_1, STGCNV21Config, "2.1", prenorm_warmup=True),
+    "stgcn_attn_2": ModelSpec(STGCN_V2_2, STGCNV22Config, "2.2", prenorm_warmup=True),
+    "esa": ModelSpec(STGCN_V3, STGCNV3Config, "3.0"),
+    "multitask": ModelSpec(STGCN_V1_Multitask, STGCNConfig, "1.0", prenorm_warmup=True),
 }
 
-# Directory aliases select a fixed version; stgcn_attn means V2.0, not latest.
-# Historical experiment names remain supported.
-MODEL_ALIASES = {
-    "stgcn": "stgcn_v1",
-    "stgcn_attn": "stgcn_v2",
-    "esa": "stgcn_v3",
-    "multitask": "stgcn_v1_mtl",
-    "stgcn_v4": "stgcn_v1_mtl",
-    "stgcn-v2": "stgcn_v2",
-    "stgcn-v2.1": "stgcn_v2.1",
-    "stgcn-v2.2": "stgcn_v2.2",
+# Read old checkpoint metadata without rewriting serialized data. These are
+# not accepted as model names in new calls or used in output filenames.
+_LEGACY_CHECKPOINT_NAMES = {
+    "stgcn_v1": "stgcn",
+    "stgcn_v2": "stgcn_attn_0",
+    "stgcn-v2": "stgcn_attn_0",
+    "stgcn_attn": "stgcn_attn_0",
+    "stgcn_v2.1": "stgcn_attn_1",
+    "stgcn-v2.1": "stgcn_attn_1",
+    "stgcn_v2.2": "stgcn_attn_2",
+    "stgcn-v2.2": "stgcn_attn_2",
+    "stgcn_v3": "esa",
+    "stgcn_v1_mtl": "multitask",
+    "stgcn_v4": "multitask",
 }
 
 
 def canonical_model_type(model_type: str) -> str:
-    canonical = MODEL_ALIASES.get(model_type, model_type)
-    if canonical not in MODEL_REGISTRY:
-        choices = sorted((*MODEL_REGISTRY.keys(), *MODEL_ALIASES.keys()))
+    if model_type not in MODEL_REGISTRY:
         raise ValueError(
-            f"Unknown model_type: {model_type!r}; expected one of {choices}"
+            f"Unknown model_type: {model_type!r}; expected one of {sorted(MODEL_REGISTRY)}"
         )
-    return canonical
+    return model_type
+
+
+def checkpoint_model_type(model_type: str) -> str:
+    return canonical_model_type(_LEGACY_CHECKPOINT_NAMES.get(model_type, model_type))
 
 
 def get_model_spec(model_type: str) -> ModelSpec:

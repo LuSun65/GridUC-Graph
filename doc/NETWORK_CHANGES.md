@@ -265,7 +265,7 @@ Run in the `lu_uc` environment; the case and UC type are inferred from the path:
 python label_pricing.py --sample-dir ../GridUC-Graph/data/case5/samples/tcuc
 ```
 
-By default, all samples are processed and valid labels are skipped; `--sample-id 1` selects one sample, and `--overwrite` forces recomputation. Validated results are saved atomically, preserving the original scenario; the hash covers only the commitment matrix. Failures leave the original file intact and processing continues; failed matrix inversion does not fall back to a pseudoinverse. The console and logs under `runs/lmp_labels/casexx/` record status, runtime, and the failure list without tracebacks; any failure results in a nonzero exit code. Integration with new-sample generation and training data remains pending.
+By default, all samples are processed and valid labels are skipped; `--sample-id 1` selects one sample, and `--overwrite` forces recomputation. Validated results are saved atomically, preserving the original scenario; the hash covers only the commitment matrix. Failures leave the original file intact and processing continues; failed matrix inversion does not fall back to a pseudoinverse. The console and logs under `log/casexx/lmp_labels/` record status, runtime, and the failure list without tracebacks; any failure results in a nonzero exit code. Integration with new-sample generation and training data remains pending.
 
 ## 3. Planned Changes
 

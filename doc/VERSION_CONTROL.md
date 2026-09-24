@@ -107,92 +107,66 @@ lib/models/
 ├── model_input.py       # 共享输入 dataclass
 ├── model_registry.py    # 统一模型注册
 ├── mlp.py
-├── common/              # 跨版本共享基础层
-├── stgcn/               # V1：原始 STGCN
-├── stgcn_attn/          # V2、V2.1、V2.2：Attention 系列
-├── esa/                 # V3：ESA 接口，计算尚未实现
-└── multitask/           # V4：共享 V1 编码器的 UC/LMP 多任务模型
+├── common/              # 共享基础层
+├── stgcn/               # 原始 STGCN
+├── stgcn_attn/          # stgcn_attn_0/1/2：Attention 系列
+├── esa/                 # ESA 接口，计算尚未实现
+└── multitask/           # 共享 STGCN 编码器的 UC/LMP 多任务模型
 ```
 
-配置 dataclass 与实现同文件。复用的 V1 分支可直接从 `stgcn/` 导入，共享算子从 `common/` 导入。数据加载器和模型直接使用 `model_input.py` 中的共享输入类型。预处理数据按当前代码生成，不提供旧类路径兼容。
+配置 dataclass 与实现同文件。复用的 STGCN 分支可直接从 `stgcn/` 导入，共享算子从 `common/` 导入。数据加载器和模型直接使用 `model_input.py` 中的共享输入类型。预处理数据按当前代码生成，不提供旧类路径兼容。
 
 ### 4.2 复用原则
 
 - 行为和接口完全一致：直接复用现有 layer 或 block。
-- 接口相似但计算细节不同：新增 V2 layer/module。
-- 只有超参数不同：可以配置化，但新参数不得改变 V1 默认行为。
-- 避免在共享模块中堆积大量 `if version == ...` 分支。
-- 实现 V2 时发现的 V1 bug 不应顺手修改；应单独记录、测试并决定是否发布 V1 修复版本。
+- 接口相似但计算细节不同：新增相应的 layer/module。
+- 只有超参数不同：可以配置化，但新参数不得改变原模型默认行为。
+- 避免在共享模块中堆积大量 `if model_type == ...` 分支。
+- 实现新模型时发现的基础模型 bug 不应顺手修改；应单独记录、测试并决定是否修复。
 
 ### 4.3 模型注册
 
-注册表位于 `lib/models/model_registry.py`，对应规则如下：
+注册表位于 `lib/models/model_registry.py`。配置及模型、结果、日志文件名统一使用以下名称：
 
-| 版本 | 目录 | 注册名称 | 别名 |
-|---|---|---|---|
-| 基线 | `mlp.py` | `mlp` | — |
-| V1 | `stgcn/` | `stgcn_v1` | `stgcn` |
-| V2.0 | `stgcn_attn/` | `stgcn_v2` | `stgcn_attn`、`stgcn-v2` |
-| V2.1 | `stgcn_attn/` | `stgcn_v2.1` | `stgcn-v2.1` |
-| V2.2 | `stgcn_attn/` | `stgcn_v2.2` | `stgcn-v2.2` |
-| V3 | `esa/` | `stgcn_v3` | `esa` |
-| V4 | `multitask/` | `stgcn_v1_mtl` | `multitask`、`stgcn_v4` |
+| 注册名称 | 源码位置 | 说明 |
+|---|---|---|
+| `mlp` | `mlp.py` | MLP 基线 |
+| `stgcn` | `stgcn/` | 原始 STGCN |
+| `stgcn_attn_0` | `stgcn_attn/` | Fusion attention |
+| `stgcn_attn_1` | `stgcn_attn/` | Dynamic 与 Fusion attention |
+| `stgcn_attn_2` | `stgcn_attn/` | 更深的 attention 网络 |
+| `esa` | `esa/` | ESA 接口 |
+| `multitask` | `multitask/` | UC/LMP 多任务模型 |
 
-`stgcn_attn` 固定对应 V2.0；V2.1、V2.2 需明确使用对应的注册名称或别名。
-
-目录改名不改变模型计算、现有注册名称或检查点架构版本。V4 是模型家族编号；
-其 `architecture_version` 仍为 `1.0`，保持现有多任务检查点的元数据兼容。
-Python 导入使用新目录路径；不提供旧 `lib.models.v1/v2/v3` 包路径兼容。
-以配置字典和 `state_dict` 保存的检查点不依赖这些旧包路径；直接 pickle
-旧配置对象或整个模型的产物需要在旧环境转存为配置字典和 `state_dict`。
-产物文件名仍使用调用方传入的模型名称，保存和加载应使用同一名称；
-`stgcn_v4` 别名不会自动查找名为 `stgcn_v1_mtl.pt` 的文件。
+本次不拆分源码目录。新调用不接受历史版本式模型名称；读取旧 checkpoint 时，
+仅在内存中转换其模型名元数据。现有模型、结果、日志只重命名文件，不改写内容。
+checkpoint 的 `architecture_version` 保留原值，用于验证序列化模型的兼容性。
 
 ## 5. 数据和实验产物隔离
 
 ### 5.1 输入与输出使用不同根目录
 
-V2 分支的新实验框架只需区分输入与运行产物：
-
 - `input_root`：case 文件、raw samples，以及可复用的 processed data。
-- `output_root`：各 `run_id` 目录的可写父目录。
+- `output_root`：模型、结果、日志和 benchmark 的可写项目根目录。
 
-新实验框架同时注册并运行 V1 兼容架构和 V2 架构。两者可以通过配置直接读取同一份 V1 processed data；只有输入特征、标签、样本集合、数据划分或处理逻辑发生变化时才重新运行 process。训练及测试输出通过不同 `run_id` 写入 V2 worktree 的实验目录。这里的 V1 指 V1 模型架构，而不是在冻结的 `main` worktree 中运行新的实验基础设施。
-
-V2 worktree 可以从 V1 目录只读访问已有的大体积输入和 legacy processed data。运行产生的模型、benchmark、result 和 log 写入 `<output_root>/runs/<run_id>/<case>/`；process 产生的 tensors 写入配置的 `input_root/<case>/processed/`，因此需要确保该输入根可写，并留意同名文件会被原子替换。`main` worktree 及其现有 `data/<case>/processed`、`data/<case>/model`、`data/<case>/result` 和 `log/` 保持只读。不要把整个 V1 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 数据和产物的风险。
+默认使用当前工作树的 `data/` 作为输入根。可以只读复用 V1 的输入；sample 和 process 会写入配置的 `input_root`，运行这些阶段时需选择可写的本地输入目录。整理当前工作树不移动或修改 V1 工作树的数据。
 
 ### 5.2 实验目录
 
-Git branch 和 worktree 已经标识源码基线，具体架构、数据和训练条件由 manifest 记录。目录只使用一个 `run_id`，其唯一职责是防止产物覆盖，不再把模型、case、seed 等信息重复编码进多级 ID。
+模型、结果和常规日志沿用 GridUC-Graph 的目录层级：
 
 ```text
 <output_root>/
-└── runs/
-    └── <run_id>/
-        └── <case>/
-            ├── processed/                 # 仅在本次需要重新 process 时存在
-            │   └── <uc>.pt
-            ├── checkpoints/
-            │   └── <uc>/<model>.pt
-            ├── benchmarks/
-            │   └── <uc>_<solver>_seed<seed>_n<count>.pkl
-            ├── logs/
-            │   └── <stage>/...
-            └── results/
-                └── <uc>/<model>.pkl
+├── data/<case>/
+│   ├── model/<uc>_<model>.pt
+│   ├── result/<uc>_<model>.pkl
+│   └── benchmarks/<uc>_<solver>_seed<seed>_n<count>.pkl
+└── log/<case>/<stage>/...
 ```
 
-`run_id` 只需简短且唯一，例如：
+模型名称保留调用方传入的原样，包括连字符和下划线。训练与测试读取同一模型路径；`checkpoint_run_id` 保留参数兼容性，但不再选择独立的模型目录。模型、结果和常规日志不再按 `run_id` 隔离，相同 case、UC 类型和模型名对应同一个文件。
 
-```text
-run_id = r001
-run_id = r002
-run_id = r003
-```
-
-若希望便于人工浏览，也可以使用 `fusion-attn-01` 这类简短名称，但不要求在名称中完整复述架构、case、UC 类型、seed 和日期。需要把若干运行归为一组对比时，在 manifest 中填写可选的 `comparison_group`；它只是报告分组标签，不参与目录寻址，也不要求全局唯一。
-
-现有 `data/<case>/model`、`data/<case>/result` 和 `log/` 视为 legacy 产物，不移动、不重命名、不覆盖。
+benchmark 统一存放在 `data/<case>/benchmarks/`，不再按 `run_id` 隔离。LMP 标签日志存放在 `log/<case>/lmp_labels/`，IIS 诊断文件也不移动。样本和 processed tensors 仍使用 `input_root/<case>/samples/` 和 `input_root/<case>/processed/`。
 
 ### 5.3 数据共享规则
 
@@ -284,10 +258,10 @@ created_at
 
 ### 7.1 固定 benchmark
 
-测试阶段使用带元数据的固定测试集，以保证同一 `run_id` 内不同模型以及跨次调用的结果可比。首次运行时生成并保存，后续调用只有在 case、UC 类型、solver 模式、随机种子、请求数量和 solver 配置全部匹配时才复用：
+测试阶段使用带元数据的固定测试集，以保证不同模型以及跨次调用的结果可比。首次运行时生成并保存，后续调用只有在 case、UC 类型、solver 模式、随机种子、请求数量和 solver 配置全部匹配时才复用：
 
 ```text
-<output_root>/runs/<run_id>/<case>/benchmarks/
+<output_root>/data/<case>/benchmarks/
 └── <uc>_<solver>_seed<seed>_n<count>.pkl
 ```
 

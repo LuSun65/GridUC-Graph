@@ -14,11 +14,14 @@ def _validate_id(name: str, value: str) -> None:
 
 @dataclass(frozen=True)
 class ExperimentPaths:
-    """Input and per-run output locations for one experiment run.
+    """Input and output locations using the original GridUC-Graph layout.
 
     ``input_root`` contains case definitions, reusable raw samples, and
     processed tensors. Sampling and processing write their outputs there.
-    Training, checkpoints, results, benchmarks, and logs use ``output_root``.
+    Models, results, and benchmarks use ``output_root/data/<case>``;
+    ordinary logs use ``output_root/log/<case>``.
+    ``checkpoint_run_id`` is accepted for existing callers but no longer
+    selects a separate model directory.
     """
 
     input_root: Path
@@ -39,8 +42,11 @@ class ExperimentPaths:
 
     @property
     def checkpoint_run_root(self) -> Path:
-        run_id = self.checkpoint_run_id or self.run_id
-        return self.output_root / "runs" / run_id
+        return self.output_root / "data"
+
+    def output_case_root(self, casename: str) -> Path:
+        _validate_id("casename", casename)
+        return self.output_root / "data" / casename
 
     def run_case_root(self, casename: str) -> Path:
         _validate_id("casename", casename)
@@ -66,21 +72,17 @@ class ExperimentPaths:
     def checkpoint_path(self, casename: str, uc_type: str, model_type: str) -> Path:
         _validate_id("uc_type", uc_type)
         _validate_id("model_type", model_type)
-        return self.run_case_root(casename) / "checkpoints" / uc_type / f"{model_type}.pt"
+        return self.output_case_root(casename) / "model" / f"{uc_type}_{model_type}.pt"
 
     def test_checkpoint_path(self, casename: str, uc_type: str,
                              model_type: str) -> Path:
-        """Checkpoint selected for testing; defaults to the current run."""
-        _validate_id("casename", casename)
-        _validate_id("uc_type", uc_type)
-        _validate_id("model_type", model_type)
-        return (self.checkpoint_run_root / casename /
-                "checkpoints" / uc_type / f"{model_type}.pt")
+        """Read the same case/model path used by training."""
+        return self.checkpoint_path(casename, uc_type, model_type)
 
     def result_path(self, casename: str, uc_type: str, model_type: str) -> Path:
         _validate_id("uc_type", uc_type)
         _validate_id("model_type", model_type)
-        return self.run_case_root(casename) / "results" / uc_type / f"{model_type}.pkl"
+        return self.output_case_root(casename) / "result" / f"{uc_type}_{model_type}.pkl"
 
     def benchmark_path(self, casename: str, uc_type: str, solver_mode: str,
                        seed_base: int, n_test: int) -> Path:
@@ -91,9 +93,10 @@ class ExperimentPaths:
         if n_test < 1:
             raise ValueError("n_test must be positive")
         filename = f"{uc_type}_{solver_mode}_seed{seed_base}_n{n_test}.pkl"
-        return self.run_case_root(casename) / "benchmarks" / filename
+        return self.output_case_root(casename) / "benchmarks" / filename
 
     def log_path(self, casename: str, *parts: str) -> Path:
+        _validate_id("casename", casename)
         for part in parts:
             _validate_id("log path component", part)
-        return self.run_case_root(casename) / "logs" / Path(*parts)
+        return self.output_root / "log" / casename / Path(*parts)

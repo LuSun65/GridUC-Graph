@@ -52,28 +52,24 @@ GE-Sampling/
 
 There is no CLI. The whole pipeline runs inside a single Python process by calling `lib.runner.run_all` from `run_<case>.py`.
 
-## Model directories and versions
+## Model names and directories
 
-| Version | Source directory | Canonical registry name | Description |
-|---|---|---|---|
-| Baseline | `lib/models/mlp.py` | `mlp` | MLP baseline |
-| V1 | `lib/models/stgcn/` | `stgcn_v1` | Original STGCN; `stgcn` is an alias |
-| V2.0 | `lib/models/stgcn_attn/` | `stgcn_v2` | Fusion attention; `stgcn_attn` is an alias |
-| V2.1 | `lib/models/stgcn_attn/` | `stgcn_v2.1` | Dynamic and fusion attention |
-| V2.2 | `lib/models/stgcn_attn/` | `stgcn_v2.2` | Deeper network with residual blocks |
-| V3 | `lib/models/esa/` | `stgcn_v3` | ESA interfaces; `esa` is an alias; computation is not implemented |
-| V4 | `lib/models/multitask/` | `stgcn_v1_mtl` | Shared V1 encoder with UC/LMP heads; `multitask` and `stgcn_v4` are aliases |
+| Registry name and filename suffix | Source directory | Description |
+|---|---|---|
+| `mlp` | `lib/models/mlp.py` | MLP baseline |
+| `stgcn` | `lib/models/stgcn/` | Original STGCN |
+| `stgcn_attn_0` | `lib/models/stgcn_attn/` | Fusion attention |
+| `stgcn_attn_1` | `lib/models/stgcn_attn/` | Dynamic and fusion attention |
+| `stgcn_attn_2` | `lib/models/stgcn_attn/` | Deeper attention network with residual blocks |
+| `esa` | `lib/models/esa/` | ESA interface; computation is not implemented |
+| `multitask` | `lib/models/multitask/` | Shared STGCN encoder with UC/LMP heads |
 
-`stgcn_attn` always selects V2.0; select `stgcn_v2.1` or `stgcn_v2.2` explicitly for those variants.
-
-Directories describe model families: former `v1/`, `v2/`, and `v3/` are now
-`stgcn/`, `stgcn_attn/`, and `esa/`. The `multitask/` directory is V4.
-Use these new package paths for Python imports. Existing registry names and
-checkpoint architecture versions remain unchanged. In particular, V4 keeps
-`architecture_version="1.0"`: its family number does not change its weights.
-Checkpoint and result filenames use the model name supplied by the caller, so
-use the same name when saving and loading (`stgcn_v4` and `stgcn_v1_mtl` resolve
-to the same model but name different artifact files).
+Use these exact names in configuration and model/result/log filenames. Source
+packages are unchanged; the attention models still share `stgcn_attn/`.
+Historical model names are recognized only when reading old checkpoint metadata,
+not as names for new calls. Existing checkpoint, result, and log bytes remain
+unchanged; only filenames are renamed. Checkpoint `architecture_version` values
+are retained for compatibility and do not define registry names.
 
 ## Environment
 
@@ -162,11 +158,11 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 **process** — Raw samples → training tensors `.pt` under `input_root/<case>/processed/`. Chunk size is 200 by default and the train/test split is a sequential 0.8 cut. The process stage overwrites the matching `<uc>.pt`; omit this stage and set `processed_path` to reuse a file elsewhere.
 
-**train** — The best model by test loss is saved at `runs/<run_id>/<case>/checkpoints/<uc>/<model>.pt`, with checkpoint structure `{config, state_dict}`. When `train_devices` is set, the `(uc_type, model)` tasks are assigned round-robin to those devices; each device has one process and runs its assigned queue sequentially.
+**train** — The best model by test loss is saved at `data/<case>/model/<uc>_<model>.pt`, with checkpoint structure `{config, state_dict}`. When `train_devices` is set, the `(uc_type, model)` tasks are assigned round-robin to those devices; each device has one process and runs its assigned queue sequentially.
 
 The two models differ in size by three orders of magnitude: on case6515 the MLP's first layer flattens the input into 682,320 dimensions fully connected to 512, for 3.6×10⁸ parameters (1.45GB); the STGCN shares weights over nodes and edges, for 7.5×10⁵ parameters (3.0MB).
 
-**test** — Load or generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Generated cases, including their ground truth, are saved below `runs/<run_id>/<case>/benchmarks/` and reused by later test runs when the UC type, solver mode, seed, requested count, and solver configuration match. Set `checkpoint_run_id` to load checkpoints from `runs/<checkpoint_run_id>/<case>/checkpoints/<uc>/<model>.pt`. If it is omitted, testing loads checkpoints from the current `run_id` as before. Results are always stored below the current `run_id` at `runs/<run_id>/<case>/results/<uc>/<model>.pkl`.
+**test** — Load or generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Generated cases, including their ground truth, are saved below `data/<case>/benchmarks/` and reused by later test runs when the UC type, solver mode, seed, requested count, and solver configuration match. Training and testing share `<output_root>/data/<case>/model/<uc>_<model>.pt`; `checkpoint_run_id` is accepted for compatibility but no longer selects a separate model directory. Results are stored at `<output_root>/data/<case>/result/<uc>_<model>.pkl`. Models, results, and ordinary logs are not isolated by `run_id`; the same case/type/model uses the same file. Model names are preserved exactly as supplied.
 
 **summary** — Reprint the summary table from stored results, so format changes need no re-testing (`print_case_summary` in `lib/tester.py`).
 
@@ -238,20 +234,20 @@ Inputs and generated artifacts have separate roots. `input_root` may point at th
     ├── samples/<uc>/<sid>.pkl
     └── processed/<uc>.pt             # optional reusable legacy input
 
-<output_root>/runs/<run_id>/
-└── <case>/
-    ├── checkpoints/<uc>/<model>.pt
-    ├── benchmarks/<uc>_<solver>_seed<seed>_n<count>.pkl
-    ├── logs/<stage>/...
-    └── results/<uc>/<model>.pkl
+<output_root>/
+├── data/<case>/
+│   ├── model/<uc>_<model>.pt
+│   ├── result/<uc>_<model>.pkl
+│   └── benchmarks/<uc>_<solver>_seed<seed>_n<count>.pkl
+└── log/<case>/<stage>/...
 ```
 
-The `sample` and `process` stages write reusable samples and processed tensors under `input_root`, so that root must be writable when either stage runs. Processing writes `input_root/<case>/processed/<uc>.pt`, atomically replacing a same-name file. When `process` is omitted, training reads that path by default or the explicit `processed_path` template. The loader performs lightweight checks of train/test entries, tensor batch dimensions, graph fields, and—when raw samples are available—the total sample count. Logs remain under `output_root/runs/<run_id>/<case>/logs/`.
+The `sample` and `process` stages write reusable samples and processed tensors under `input_root`, so that root must be writable when either stage runs. Processing writes `input_root/<case>/processed/<uc>.pt`, atomically replacing a same-name file. When `process` is omitted, training reads that path by default or the explicit `processed_path` template. The loader performs lightweight checks of train/test entries, tensor batch dimensions, graph fields, and—when raw samples are available—the total sample count. Ordinary logs use `<output_root>/log/<case>/<stage>/`. LMP label logs are stored at `log/<case>/lmp_labels/`; IIS diagnostic files keep their existing locations.
 
 When moving between machines: `processed/` is generated deterministically from `samples/`, so just re-run the `process` stage instead of transferring it; MLP checkpoints can reach GB scale on large cases. Checkpoint loading uses `map_location`, so weights trained on CUDA load directly on mps/cpu.
 
 ## .gitignore rules
 
 - `/runs/`: generated run outputs are not committed.
-- `data/`: the default local input root is not committed.
+- `data/` and `log/`: local inputs, models, results, and logs are not committed.
 - Python caches (`__pycache__/` etc.), virtual environments (`.venv/` etc.), IDE configs (`.vscode/`, `.idea/`, `.claude/`), and macOS metadata (`.DS_Store` etc.) are all ignored.

@@ -12,10 +12,10 @@ from lib.data_loader import load_processed_data, make_dataloader
 from lib.models.multitask import STGCNOutput
 from lib.experiment import ExperimentPaths
 from lib.models.model_registry import (
-    MODEL_ALIASES,
     MODEL_REGISTRY,
     build_model,
     canonical_model_type,
+    checkpoint_model_type,
     get_model_spec,
     model_from_config,
 )
@@ -24,7 +24,7 @@ from lib.models.model_registry import (
 # Compatibility view for code that imported the old class-only registry.
 MODEL_CLASSES = {
     name: get_model_spec(name).model_class
-    for name in (*MODEL_REGISTRY.keys(), *MODEL_ALIASES.keys())
+    for name in MODEL_REGISTRY
 }
 
 
@@ -58,7 +58,7 @@ def load_model(model_type: str, casename: str, uc_type: str,
     requested_type = canonical_model_type(model_type)
     checkpoint_type = checkpoint.get('model_type')
     if checkpoint_type is not None:
-        checkpoint_type = canonical_model_type(checkpoint_type)
+        checkpoint_type = checkpoint_model_type(checkpoint_type)
         if checkpoint_type != requested_type:
             raise ValueError(
                 f"Checkpoint model_type is {checkpoint_type!r}, "
@@ -165,7 +165,7 @@ def train_model(
     # so model order in a comparison run does not affect initialization/shuffling.
     _set_model_seed(random_seed)
 
-    multitask = canonical_model_type(model_type) == "stgcn_v1_mtl"
+    multitask = canonical_model_type(model_type) == "multitask"
     train_data, test_data, lmp_stats = load_processed_data(
         processed_path, expected_sample_count=expected_sample_count, require_lmp=multitask
     )

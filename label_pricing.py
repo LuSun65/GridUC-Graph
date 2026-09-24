@@ -71,7 +71,7 @@ def main():
     )
     if version is None:
         parser.error("Sample path must be inside GridUC-Graph (v1) or GridUC-Graph-v2 (v2)")
-    log_dir = Path(__file__).resolve().parent / "runs" / "lmp_labels" / case_name
+    log_dir = Path(__file__).resolve().parent / "log" / case_name / "lmp_labels"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{uc_type}_{version}_{datetime.now():%Y%m%d_%H%M%S}.log"
     logger = logging.getLogger("lmp_labels")
