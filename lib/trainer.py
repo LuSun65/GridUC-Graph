@@ -78,7 +78,7 @@ def load_model(model_type: str, casename: str, uc_type: str,
         )
     model = model_from_config(requested_type, checkpoint['config'])
     model.load_state_dict(checkpoint['state_dict'])
-    model.training_config = checkpoint['training_config']
+    model.training_config = checkpoint.get('training_config')
     model.to(device)
     model.eval()
     print(f"[LOADED] {model_type} model <- {path}  device={device}")
