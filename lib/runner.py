@@ -97,7 +97,8 @@ def run_process(case, uc_types, paths, chunk_size, train_ratio):
 
 def run_train(case, uc_types, models, paths, configured_processed_path,
               generated_processed,
-              epochs=20, device="cpu", batch_size=32, random_seed=42):
+              epochs=20, device="cpu", batch_size=32, random_seed=42,
+              lambda_lmp=1.0, huber_delta=1.0):
     failed = []
     for uc in uc_types:
         source = _processed_source(
@@ -113,6 +114,7 @@ def run_train(case, uc_types, models, paths, configured_processed_path,
                             paths=paths, epochs=epochs, device=device,
                             batch_size=batch_size,
                             random_seed=random_seed,
+                            lambda_lmp=lambda_lmp, huber_delta=huber_delta,
                             processed_path=source,
                             expected_sample_count=expected_count),
             ))
@@ -122,7 +124,7 @@ def run_train(case, uc_types, models, paths, configured_processed_path,
 
 
 def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
-                         random_seed):
+                         random_seed, lambda_lmp=1.0, huber_delta=1.0):
     """Run one queue of training tasks sequentially in a spawned GPU process."""
     failed = []
     for uc, model, source, expected_count in tasks:
@@ -135,6 +137,7 @@ def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
                 model_type=model, casename=case, uc_type=uc, paths=paths,
                 epochs=epochs, device=device, batch_size=batch_size,
                 random_seed=random_seed, processed_path=source,
+                lambda_lmp=lambda_lmp, huber_delta=huber_delta,
                 expected_sample_count=expected_count,
             ),
         ))
@@ -145,7 +148,8 @@ def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
 
 def run_train_parallel(case, uc_types, models, paths,
                        configured_processed_path, generated_processed,
-                       devices, epochs=20, batch_size=32, random_seed=42):
+                       devices, epochs=20, batch_size=32, random_seed=42,
+                       lambda_lmp=1.0, huber_delta=1.0):
     """Distribute training tasks over devices, with one process per device."""
     devices = tuple(devices)
     if not devices:
@@ -181,7 +185,7 @@ def run_train_parallel(case, uc_types, models, paths,
         futures = {
             pool.submit(
                 _run_train_on_device, device, queue, case, paths, epochs,
-                batch_size, random_seed,
+                batch_size, random_seed, lambda_lmp, huber_delta,
             ): (device, queue)
             for device, queue in active
         }
@@ -241,7 +245,8 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             models=("stgcn_v2", "stgcn_v1", "mlp"), *,
             input_root="data", output_root=".", run_id: str,
             processed_path=None, process_chunk_size=200, train_ratio=0.8,
-            train_devices=None, checkpoint_run_id=None):
+            train_devices=None, checkpoint_run_id=None,
+            lambda_lmp=1.0, huber_delta=1.0):
     """
     sample_solver / test_solver: transmission-security formulation used when
     generating training labels and when testing, respectively. One of
@@ -283,13 +288,13 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
                 failed = run_train(
                     case, uc_types, models, paths, processed_path,
                     generated_processed,
-                    epochs, device, batch_size, random_seed,
+                    epochs, device, batch_size, random_seed, lambda_lmp, huber_delta,
                 )
             else:
                 failed = run_train_parallel(
                     case, uc_types, models, paths, processed_path,
                     generated_processed, train_devices,
-                    epochs, batch_size, random_seed,
+                    epochs, batch_size, random_seed, lambda_lmp, huber_delta,
                 )
         elif stage == "test":
             failed = run_test(case, uc_types, models, paths, n_test, test_solver, device)

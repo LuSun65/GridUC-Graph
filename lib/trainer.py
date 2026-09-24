@@ -9,6 +9,7 @@ import torch.nn as nn
 from torch.optim import Adam
 
 from lib.data_loader import load_processed_data, make_dataloader
+from lib.models.multitask import STGCNOutput
 from lib.experiment import ExperimentPaths
 from lib.models.model_registry import (
     MODEL_ALIASES,
@@ -45,6 +46,7 @@ def save_model(model, model_type: str, casename: str, uc_type: str,
         'architecture_version': spec.architecture_version,
         'config': config,
         'state_dict': model.state_dict(),
+        'training_config': getattr(model, 'training_config', None),
     }, path)
     print(f"[SAVED] {model_type} model -> {path}")
 
@@ -76,14 +78,17 @@ def load_model(model_type: str, casename: str, uc_type: str,
         )
     model = model_from_config(requested_type, checkpoint['config'])
     model.load_state_dict(checkpoint['state_dict'])
+    model.training_config = checkpoint['training_config']
     model.to(device)
     model.eval()
     print(f"[LOADED] {model_type} model <- {path}  device={device}")
     return model
 
 
-def _run_epoch(model, loader, criterion, optimizer=None, device="cpu") -> float:
-    total_loss = 0.0
+def _run_epoch(model, loader, criterion, optimizer=None, device="cpu",
+               lambda_lmp=1.0, huber_delta=1.0) -> dict:
+    uc_sum = lmp_sum = 0.0
+    lmp_count = 0
     for batch in loader:
         # Datasets stay on CPU and move one batch at a time: the big cases hold
         # gigabytes of processed tensors that would otherwise pin the whole set
@@ -92,12 +97,30 @@ def _run_epoch(model, loader, criterion, optimizer=None, device="cpu") -> float:
         if optimizer is not None:
             optimizer.zero_grad()
         out = model(batch)
-        loss = criterion(out, batch.uc_target)
+        logits = out.uc_logits if isinstance(out, STGCNOutput) else out
+        uc_loss = criterion(logits, batch.uc_target)
+        loss = uc_loss
+        if isinstance(out, STGCNOutput):
+            target = batch.lmp_target
+            pred = out.lmp_pred
+            if target.numel() == 0:
+                raise ValueError("Batch has no valid LMP labels")
+            normalized = (target - model.lmp_mean) / model.lmp_std
+            lmp_loss = nn.functional.huber_loss(pred, normalized, delta=huber_delta)
+            loss = uc_loss + lambda_lmp * lmp_loss
+            lmp_sum += lmp_loss.item() * target.numel()
+            lmp_count += target.numel()
+        if not torch.isfinite(loss):
+            raise ValueError("Non-finite training loss")
         if optimizer is not None:
             loss.backward()
             optimizer.step()
-        total_loss += loss.item() * batch.node_feat_s.shape[0]
-    return total_loss / len(loader.dataset)
+        uc_sum += uc_loss.item() * batch.node_feat_s.shape[0]
+    metrics = {"uc": uc_sum / len(loader.dataset)}
+    if lmp_count:
+        metrics["lmp"] = lmp_sum / lmp_count
+    metrics["total"] = metrics["uc"] + lambda_lmp * metrics.get("lmp", 0.0)
+    return metrics
 
 
 def _run_prenorm_warmup(model, loader, device="cpu") -> None:
@@ -135,6 +158,8 @@ def train_model(
     hidden_dim: int = 512,
     random_seed: int = 42,
     config_overrides: dict = None,
+    lambda_lmp: float = 1.0,
+    huber_delta: float = 1.0,
 ):
     dev = torch.device(device)
 
@@ -142,8 +167,9 @@ def train_model(
     # so model order in a comparison run does not affect initialization/shuffling.
     _set_model_seed(random_seed)
 
-    train_data, test_data = load_processed_data(
-        processed_path, expected_sample_count=expected_sample_count
+    multitask = canonical_model_type(model_type) == "stgcn_v1_mtl"
+    train_data, test_data, lmp_stats = load_processed_data(
+        processed_path, expected_sample_count=expected_sample_count, require_lmp=multitask
     )
     train_loader = make_dataloader(train_data, batch_size=batch_size, shuffle=True)
     test_loader = make_dataloader(test_data, batch_size=batch_size, shuffle=False)
@@ -153,6 +179,12 @@ def train_model(
         overrides.setdefault("n_hidden", n_hidden)
         overrides.setdefault("hidden_dim", hidden_dim)
     model = build_model(model_type, train_data, overrides).to(dev)
+    if multitask:
+        if not np.isfinite([lmp_stats['mean'], lmp_stats['std']]).all() or lmp_stats['std'] <= 0:
+            raise ValueError("LMP normalization requires finite mean and positive std")
+        model.lmp_mean.fill_(lmp_stats['mean'])
+        model.lmp_std.fill_(lmp_stats['std'])
+        model.training_config = {"lambda_lmp": lambda_lmp, "huber_delta": huber_delta}
     spec = get_model_spec(model_type)
 
     if spec.prenorm_warmup:
@@ -172,11 +204,14 @@ def train_model(
         t0 = time.time()
 
         model.train()
-        train_loss = _run_epoch(model, train_loader, criterion, optimizer, dev)
+        train_metrics = _run_epoch(model, train_loader, criterion, optimizer, dev,
+                                   lambda_lmp, huber_delta)
 
         model.eval()
         with torch.no_grad():
-            test_loss = _run_epoch(model, test_loader, criterion, device=dev)
+            test_metrics = _run_epoch(model, test_loader, criterion, device=dev,
+                                     lambda_lmp=lambda_lmp, huber_delta=huber_delta)
+        test_loss = test_metrics['uc']
 
         elapsed = time.time() - t0
 
@@ -185,11 +220,20 @@ def train_model(
             best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
         if epoch % print_interval == 0:
-            print(f"  epoch {epoch:4d}/{epochs}"
-                  f"  train={train_loss:.4f}"
-                  f"  test={test_loss:.4f}"
-                  f"  time={elapsed:.1f}s"
-                  f"  {'* saved best' if test_loss == best_test_loss else ''}")
+            if multitask:
+                print(f"  epoch {epoch:4d}/{epochs}"
+                      f"  train: total={train_metrics['total']:.4f}"
+                      f" uc={train_metrics['uc']:.4f} lmp={train_metrics['lmp']:.4f}"
+                      f"  test: total={test_metrics['total']:.4f}"
+                      f" uc={test_metrics['uc']:.4f} lmp={test_metrics['lmp']:.4f}"
+                      f"  time={elapsed:.1f}s"
+                      f"  {'* saved best' if test_loss == best_test_loss else ''}")
+            else:
+                print(f"  epoch {epoch:4d}/{epochs}"
+                      f"  train_uc={train_metrics['uc']:.4f}"
+                      f"  val_uc={test_loss:.4f}"
+                      f"  time={elapsed:.1f}s"
+                      f"  {'* saved best' if test_loss == best_test_loss else ''}")
 
     model.load_state_dict({k: v.to(dev) for k, v in best_state_dict.items()})
     model.eval()

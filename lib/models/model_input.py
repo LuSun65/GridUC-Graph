@@ -17,6 +17,7 @@ class STGCNInput:
     gen_bus      [G]               — bus index of each generator
     edge_mask    [B, E]            — 1=active, 0=broken line (per sample)
     uc_target    [B, G, T]         — ground truth (optional, for training)
+    lmp_target   [B, N, T]         — prices in original units (optional)
     """
     node_feat_s: torch.Tensor   # [B, G, F_node_s]
     node_feat_d: torch.Tensor   # [B, T, N, F_node_d]
@@ -25,6 +26,7 @@ class STGCNInput:
     gen_bus:     torch.Tensor   # [G]
     edge_mask:   torch.Tensor   # [B, E]
     uc_target:   torch.Tensor = None  # [B, G, T]
+    lmp_target:  torch.Tensor = None  # [B, N, T], original price units
 
     def to(self, device) -> "STGCNInput":
         return STGCNInput(
@@ -35,6 +37,7 @@ class STGCNInput:
             gen_bus     = self.gen_bus.to(device),
             edge_mask   = self.edge_mask.to(device),
             uc_target   = self.uc_target.to(device) if self.uc_target is not None else None,
+            lmp_target  = self.lmp_target.to(device) if self.lmp_target is not None else None,
         )
 
 

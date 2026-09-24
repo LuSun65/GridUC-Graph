@@ -1,5 +1,6 @@
 import os
 import time
+from lib.models.multitask import STGCNOutput
 import traceback
 from dataclasses import asdict
 import numpy as np
@@ -80,7 +81,8 @@ def get_probs(model, uc_data: UCData, uc_type: str, device: str = "cpu"):
     data = to_stgcn_input(uc_data, uc_type).to(device)
     t0 = time.time()
     with torch.no_grad():
-        probs = torch.sigmoid(model(data))
+        out = model(data)
+        probs = torch.sigmoid(out.uc_logits if isinstance(out, STGCNOutput) else out)
     nn_time = time.time() - t0
     return probs[0].cpu().numpy(), nn_time
 

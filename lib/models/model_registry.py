@@ -10,6 +10,7 @@ from lib.models.v2.stgcn_v2 import STGCN_V2, STGCNV2Config
 from lib.models.v2.stgcn_v2_1 import STGCN_V2_1, STGCNV21Config
 from lib.models.v2.stgcn_v2_2 import STGCN_V2_2, STGCNV22Config
 from lib.models.v3.stgcn_v3 import STGCN_V3, STGCNV3Config
+from lib.models.multitask import STGCN_V1_Multitask
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,9 @@ class ModelSpec:
 MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "mlp": ModelSpec(MLP, MLPConfig, "1.0"),
     "stgcn_v1": ModelSpec(STGCN, STGCNConfig, "1.0", prenorm_warmup=True),
+    "stgcn_v1_mtl": ModelSpec(
+        STGCN_V1_Multitask, STGCNConfig, "1.0", prenorm_warmup=True
+    ),
     "stgcn_v2": ModelSpec(STGCN_V2, STGCNV2Config, "2.0", prenorm_warmup=True),
     "stgcn_v2.1": ModelSpec(
         STGCN_V2_1, STGCNV21Config, "2.1", prenorm_warmup=True
