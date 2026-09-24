@@ -1,40 +1,63 @@
+from collections import OrderedDict
+import hashlib
+
 import numpy as np
+from scipy import sparse
+from scipy.sparse.linalg import splu
 from lib.case_loader import UCData
 
 
-def compute_ptdf(data: UCData, ref_bus: int = 0) -> np.ndarray:
-    """
-    Compute the PTDF matrix from network topology in UCData.
+# Per-process, byte-bounded cache. Limits are deliberately not cached: they may
+# change between samples even when the electrical network is identical.
+_PTDF_CACHE = OrderedDict()
+_PTDF_CACHE_BYTES = 128 * 1024**2
 
-    Inputs:
-        data:     UCData with line_from, line_to, line_reactance, num_bus, num_line.
-        ref_bus:  reference bus index (default 0).
-    Outputs:
-        np.ndarray - [num_line, num_bus] PTDF matrix.
-    """
-    line_from = np.asarray(data.line_from, int)
-    line_to = np.asarray(data.line_to, int)
-    line_reactance = np.asarray(data.line_reactance, float)
-    num_bus = data.num_bus
-    num_line = data.num_line
 
-    bl = np.diag(1.0 / line_reactance)
-    a = np.zeros((num_bus, num_line))
-    a[line_from, range(num_line)] = 1
-    a[line_to, range(num_line)] = -1
-
-    idx = np.arange(num_bus) != ref_bus
-    bn_red = (a @ bl @ a.T)[np.ix_(idx, idx)]
+def _network_ptdf(data, reactance, ref_bus):
+    line_from = np.asarray(data.line_from, dtype=np.int64)
+    line_to = np.asarray(data.line_to, dtype=np.int64)
+    reactance = np.asarray(reactance, dtype=np.float64)
+    digest = hashlib.sha256()
+    digest.update(np.asarray([data.num_bus, data.num_line, ref_bus], dtype=np.int64).tobytes())
+    for value in (line_from, line_to, reactance):
+        digest.update(value.tobytes())
+    key = digest.digest()
+    if key in _PTDF_CACHE:
+        _PTDF_CACHE.move_to_end(key)
+        return _PTDF_CACHE[key]
+    lines = np.arange(data.num_line)
+    incidence = sparse.csc_matrix(
+        (np.r_[np.ones(data.num_line), -np.ones(data.num_line)],
+         (np.r_[line_from, line_to], np.r_[lines, lines])),
+        shape=(data.num_bus, data.num_line),
+    )
+    keep = np.arange(data.num_bus) != ref_bus
+    reduced = incidence[keep, :]
+    weighted = sparse.diags(1.0 / reactance) @ reduced.T
     try:
-        inv_bn_red = np.linalg.inv(bn_red)
-    except np.linalg.LinAlgError as error:
-        raise np.linalg.LinAlgError("Base PTDF matrix inversion failed") from error
+        factor = splu((reduced @ weighted).tocsc())
+    except RuntimeError as error:
+        raise np.linalg.LinAlgError("PTDF network factorization failed") from error
+    result = np.zeros((data.num_line, data.num_bus))
+    # Solve B.T X = (diag(b) A.T).T in blocks; never form B inverse.
+    buses = np.flatnonzero(keep)
+    for start in range(0, data.num_line, 128):
+        end = min(start + 128, data.num_line)
+        result[start:end, buses] = factor.solve(
+            weighted[start:end].toarray().T, trans="T"
+        ).T
+    result[np.abs(result) < 1e-6] = 0
+    result.setflags(write=False)
+    if result.nbytes <= _PTDF_CACHE_BYTES:
+        while _PTDF_CACHE and sum(v.nbytes for v in _PTDF_CACHE.values()) + result.nbytes > _PTDF_CACHE_BYTES:
+            _PTDF_CACHE.popitem(last=False)
+        _PTDF_CACHE[key] = result
+    return result
 
-    inv_bn_full = np.zeros((num_bus, num_bus))
-    inv_bn_full[np.ix_(idx, idx)] = inv_bn_red
-    ptdf = bl @ a.T @ inv_bn_full
-    ptdf[np.abs(ptdf) < 1e-6] = 0
-    return ptdf
+
+def compute_ptdf(data: UCData, ref_bus: int = 0) -> np.ndarray:
+    """Return a cached read-only PTDF, using sparse network factorization."""
+    return _network_ptdf(data, data.line_reactance, ref_bus)
 
 
 def compute_post_ptdf(
@@ -64,29 +87,7 @@ def compute_post_ptdf(
     line_reactance[outage_line] *= 2.0
     line_fmax[outage_line] *= 0.5
 
-    line_from = np.asarray(data.line_from, int)
-    line_to = np.asarray(data.line_to, int)
-    num_bus = data.num_bus
-    num_line = data.num_line
-
-    bl = np.diag(1.0 / line_reactance)
-    a = np.zeros((num_bus, num_line))
-    a[line_from, range(num_line)] = 1
-    a[line_to, range(num_line)] = -1
-
-    idx = np.arange(num_bus) != ref_bus
-    bn_red = (a @ bl @ a.T)[np.ix_(idx, idx)]
-    try:
-        inv_bn_red = np.linalg.inv(bn_red)
-    except np.linalg.LinAlgError as error:
-        raise np.linalg.LinAlgError(
-            f"Post-contingency PTDF matrix inversion failed (outage_line={outage_line})"
-        ) from error
-
-    inv_bn_full = np.zeros((num_bus, num_bus))
-    inv_bn_full[np.ix_(idx, idx)] = inv_bn_red
-    post_ptdf = bl @ a.T @ inv_bn_full
-    post_ptdf[np.abs(post_ptdf) < 1e-6] = 0
+    post_ptdf = _network_ptdf(data, line_reactance, ref_bus)
 
     post_fmax = factor * line_fmax
     return post_ptdf, post_fmax
