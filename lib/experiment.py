@@ -16,10 +16,9 @@ def _validate_id(name: str, value: str) -> None:
 class ExperimentPaths:
     """Input and per-run output locations for one experiment run.
 
-    ``input_root`` contains case definitions and reusable raw samples. It is
-    read-only for derived stages; the optional sampling stage populates it.
-    Existing processed tensors may be read from ``input_root`` or an explicit
-    path. Every newly generated file is placed below the isolated ``run_root``.
+    ``input_root`` contains case definitions, reusable raw samples, and
+    processed tensors. Sampling and processing write their outputs there.
+    Training, checkpoints, results, benchmarks, and logs use ``output_root``.
     """
 
     input_root: Path
@@ -57,7 +56,7 @@ class ExperimentPaths:
 
     def processed_path(self, casename: str, uc_type: str) -> Path:
         _validate_id("uc_type", uc_type)
-        return self.run_case_root(casename) / "processed" / f"{uc_type}.pt"
+        return self.default_input_processed_path(casename, uc_type)
 
     def default_input_processed_path(self, casename: str, uc_type: str) -> Path:
         _validate_id("casename", casename)

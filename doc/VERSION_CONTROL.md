@@ -159,7 +159,7 @@ V2 分支的新实验框架只需区分输入与运行产物：
 
 新实验框架同时注册并运行 V1 兼容架构和 V2 架构。两者可以通过配置直接读取同一份 V1 processed data；只有输入特征、标签、样本集合、数据划分或处理逻辑发生变化时才重新运行 process。训练及测试输出通过不同 `run_id` 写入 V2 worktree 的实验目录。这里的 V1 指 V1 模型架构，而不是在冻结的 `main` worktree 中运行新的实验基础设施。
 
-V2 worktree 可以从 V1 目录只读访问已有的大体积输入和 legacy processed data；所有新文件写入 `<output_root>/runs/<run_id>/<case>/`。`main` worktree 及其现有 `data/<case>/processed`、`data/<case>/model`、`data/<case>/result` 和 `log/` 保持只读。不要把整个 V1 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 数据和产物的风险。
+V2 worktree 可以从 V1 目录只读访问已有的大体积输入和 legacy processed data。运行产生的模型、benchmark、result 和 log 写入 `<output_root>/runs/<run_id>/<case>/`；process 产生的 tensors 写入配置的 `input_root/<case>/processed/`，因此需要确保该输入根可写，并留意同名文件会被原子替换。`main` worktree 及其现有 `data/<case>/processed`、`data/<case>/model`、`data/<case>/result` 和 `log/` 保持只读。不要把整个 V1 `data/` 以可写 symlink 连接到 V2，否则仍有误覆盖 V1 数据和产物的风险。
 
 ### 5.2 实验目录
 
@@ -218,7 +218,7 @@ run_id = r003
 - V1/V2 公平对比应读取相同的 raw samples 或同一份 processed data，并使用相同的数据划分。
 - 如果未来出现多个长期并存、容易混淆的数据版本，再引入统一的数据版本号或内容校验值；当前不预先实现 `dataset_id`、`dataset_schema_version` 或多层 fingerprint。
 
-V1 legacy processed 缺少完整元数据时，可以先检查样本数、tensor shape 和划分是否符合预期，再作为只读输入使用。新生成的 processed data 默认保存在生成它的 run 目录中，其他 run 可以通过 `processed_path` 只读引用；不得写回或覆盖 V1 文件。
+V1 legacy processed 缺少完整元数据时，可以先检查样本数、tensor shape 和划分是否符合预期，再作为只读输入使用。process 新生成的 processed data 默认保存在 `input_root/<case>/processed/`，如果使用指向 V1 数据的只读 input_root，不应运行 process；可指定新的可写 input_root。训练和测试产物仍按 run 隔离。
 
 ## 6. 实验 manifest 与 checkpoint
 

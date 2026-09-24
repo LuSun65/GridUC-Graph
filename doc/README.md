@@ -160,7 +160,7 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 **sample** — Generate UC samples together with their optimal solutions, one `pkl.gz` per sample. With `skip_existing=True`, re-running only fills in the missing samples. A failed single-sample solve affects only that sample.
 
-**process** — Raw samples → training tensors `.pt` below the current run. Chunk size is 200 by default and the train/test split is a sequential 0.8 cut. Omit this stage and set `processed_path` to reuse an existing V1 or earlier-run file.
+**process** — Raw samples → training tensors `.pt` under `input_root/<case>/processed/`. Chunk size is 200 by default and the train/test split is a sequential 0.8 cut. The process stage overwrites the matching `<uc>.pt`; omit this stage and set `processed_path` to reuse a file elsewhere.
 
 **train** — The best model by test loss is saved at `runs/<run_id>/<case>/checkpoints/<uc>/<model>.pt`, with checkpoint structure `{config, state_dict}`. When `train_devices` is set, the `(uc_type, model)` tasks are assigned round-robin to those devices; each device has one process and runs its assigned queue sequentially.
 
@@ -240,14 +240,13 @@ Inputs and generated artifacts have separate roots. `input_root` may point at th
 
 <output_root>/runs/<run_id>/
 └── <case>/
-    ├── processed/<uc>.pt          # only when this run processes data
     ├── checkpoints/<uc>/<model>.pt
     ├── benchmarks/<uc>_<solver>_seed<seed>_n<count>.pkl
     ├── logs/<stage>/...
     └── results/<uc>/<model>.pkl
 ```
 
-The `sample` stage creates reusable raw samples under `input_root`, so that stage requires a writable input root. New processed tensors are written only to the current run. When `process` is omitted, training reads `input_root/<case>/processed/<uc>.pt` by default, or the explicit `processed_path` template. Existing files are never rewritten. The loader performs lightweight checks of train/test entries, tensor batch dimensions, graph fields, and—when raw samples are available—the total sample count.
+The `sample` and `process` stages write reusable samples and processed tensors under `input_root`, so that root must be writable when either stage runs. Processing writes `input_root/<case>/processed/<uc>.pt`, atomically replacing a same-name file. When `process` is omitted, training reads that path by default or the explicit `processed_path` template. The loader performs lightweight checks of train/test entries, tensor batch dimensions, graph fields, and—when raw samples are available—the total sample count. Logs remain under `output_root/runs/<run_id>/<case>/logs/`.
 
 When moving between machines: `processed/` is generated deterministically from `samples/`, so just re-run the `process` stage instead of transferring it; MLP checkpoints can reach GB scale on large cases. Checkpoint loading uses `map_location`, so weights trained on CUDA load directly on mps/cpu.
 
