@@ -42,8 +42,8 @@ def setlog(log_file: str, overwrite: bool = False):
     formatter = logging.Formatter('%(message)s')
 
     log_dir = os.path.dirname(log_file)
-    if log_dir and not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
     file_handler = logging.FileHandler(log_file, mode='w' if overwrite else 'a', encoding="utf-8")
     file_handler.setFormatter(formatter)
@@ -64,14 +64,12 @@ def set_rnd_seed(seed: int = 42):
 
 def save_pkl(obj, path: str):
     parent_dir = os.path.dirname(path)
-    if parent_dir and not os.path.exists(parent_dir):
-        os.makedirs(parent_dir)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
     with open(path, 'wb') as f:
         pickle.dump(obj, f)
 
 
 def load_pkl(path: str):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Pickle file not found: {path}")
     with open(path, 'rb') as f:
         return pickle.load(f)

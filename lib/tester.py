@@ -184,8 +184,6 @@ def save_results(res: dict, paths: ExperimentPaths, path=None):
 def load_results(model_type: str, casename: str, uc_type: str,
                  paths: ExperimentPaths) -> dict:
     path = result_path(model_type, casename, uc_type, paths)
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Result file not found: {path}")
     return load_pkl(path)
 
 

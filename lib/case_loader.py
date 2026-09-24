@@ -92,9 +92,6 @@ def load_case(case_name: str, data_dir: str = "data/case") -> UCData:
         gen, line, load, bid_mw, bid_price, lds_pool, dync_monitor
     """
     path = os.path.join(data_dir, f"{case_name}.xlsx")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Case file not found: {path}")
-
     sheets = pd.read_excel(path, sheet_name=None)
 
     # --- gen ---

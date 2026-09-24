@@ -56,7 +56,6 @@ class ExperimentPaths:
         return self.input_root / casename / "samples" / uc_type
 
     def processed_path(self, casename: str, uc_type: str) -> Path:
-        _validate_id("casename", casename)
         _validate_id("uc_type", uc_type)
         return self.run_case_root(casename) / "processed" / f"{uc_type}.pt"
 
@@ -66,7 +65,6 @@ class ExperimentPaths:
         return self.input_root / casename / "processed" / f"{uc_type}.pt"
 
     def checkpoint_path(self, casename: str, uc_type: str, model_type: str) -> Path:
-        _validate_id("casename", casename)
         _validate_id("uc_type", uc_type)
         _validate_id("model_type", model_type)
         return self.run_case_root(casename) / "checkpoints" / uc_type / f"{model_type}.pt"
@@ -81,14 +79,12 @@ class ExperimentPaths:
                 "checkpoints" / uc_type / f"{model_type}.pt")
 
     def result_path(self, casename: str, uc_type: str, model_type: str) -> Path:
-        _validate_id("casename", casename)
         _validate_id("uc_type", uc_type)
         _validate_id("model_type", model_type)
         return self.run_case_root(casename) / "results" / uc_type / f"{model_type}.pkl"
 
     def benchmark_path(self, casename: str, uc_type: str, solver_mode: str,
                        seed_base: int, n_test: int) -> Path:
-        _validate_id("casename", casename)
         _validate_id("uc_type", uc_type)
         _validate_id("solver_mode", solver_mode)
         if seed_base < 0:
@@ -99,7 +95,6 @@ class ExperimentPaths:
         return self.run_case_root(casename) / "benchmarks" / filename
 
     def log_path(self, casename: str, *parts: str) -> Path:
-        _validate_id("casename", casename)
         for part in parts:
             _validate_id("log path component", part)
         return self.run_case_root(casename) / "logs" / Path(*parts)

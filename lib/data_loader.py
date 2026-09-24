@@ -96,9 +96,6 @@ def list_sample_files(casename: str, uc_type: str,
                       paths: ExperimentPaths) -> Tuple[str, List[str]]:
     from lib.sampler import sample_dir
     data_dir = sample_dir(casename, uc_type, paths)
-    if not os.path.isdir(data_dir):
-        raise FileNotFoundError(f"Data directory not found: {data_dir}")
-
     files = sorted(
         [f for f in os.listdir(data_dir) if f.endswith(".pkl")],
         key=lambda f: int(f.replace(".pkl", ""))
@@ -185,8 +182,6 @@ def load_processed_data(
     require_lmp: bool = False,
 ) -> Tuple[STGCNInput, STGCNInput, dict]:
     path = os.fspath(path)
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Processed data file not found: {path}")
     data = torch.load(path, weights_only=False)
     validate_processed_data(data, expected_sample_count, require_lmp)
     print(f"[load] processed data <- {path}")

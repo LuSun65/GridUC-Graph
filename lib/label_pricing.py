@@ -68,7 +68,6 @@ def label_sample(path, uc_type: str, overwrite: bool = False) -> str:
     """Return 'saved' or 'skipped'; failures leave the original file untouched."""
     path = Path(path)
     data = load_pkl(path)
-    _validate_uc_solution(data, data.uc_sol, uc_type)
     if not overwrite and valid_pricing_labels(data, uc_type):
         return "skipped"
     result = solve_pricing(data, data.uc_sol, uc_type)
