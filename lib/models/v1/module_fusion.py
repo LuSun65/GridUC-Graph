@@ -56,7 +56,7 @@ class FusionModule(nn.Module):
             n_layers = config.n_layers,
         ))
 
-    def forward(self, data: FusionGraph) -> torch.Tensor:   # [B, G, n_period]
+    def encode(self, data: FusionGraph) -> torch.Tensor:  # [B, N, f_hidden]
         B, N, _ = data.x_static.shape
 
         x = torch.cat([data.x_static, data.x_dynamic], dim=-1)  # [B, N, 2*f_in]
@@ -64,7 +64,11 @@ class FusionModule(nn.Module):
         # ChebConv expects [B*1, N, F] — run per sample
         x_bt = x.reshape(B, N, -1)
         x_bt = torch.relu(self.fusion_conv(x_bt, data.edge_index, data.edge_mask))  # [B, N, f_hidden]
+        return x_bt
 
+    def forward(self, data: FusionGraph) -> torch.Tensor:   # [B, G, n_period]
+        x_bt = self.encode(data)
+        B = x_bt.shape[0]
         # Extract generator nodes
         x_gen = x_bt[:, data.gen_bus, :]                            # [B, G, f_hidden]
 

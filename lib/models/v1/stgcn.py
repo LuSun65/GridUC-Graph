@@ -36,6 +36,8 @@ class STGCN(nn.Module):
     output: [B, G, n_period]  — logits (training) or sigmoid probs (eval)
     """
 
+    fusion_type = FusionModule
+
     def __init__(self, config: STGCNConfig):
         super().__init__()
         self.config = config
@@ -67,7 +69,7 @@ class STGCN(nn.Module):
             k_s      = config.k_s,
             n_layers = config.n_layers,
         )
-        self.fusion = FusionModule(fusion_cfg)
+        self.fusion = self.fusion_type(fusion_cfg)
 
     @classmethod
     def default_config(cls, data: STGCNInput) -> STGCNConfig:
