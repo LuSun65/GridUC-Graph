@@ -3,8 +3,8 @@
 Model family mapping: V1 → `lib/models/stgcn/`; V2/V2.1/V2.2 →
 `lib/models/stgcn_attn/`; V3 → `lib/models/esa/`; V4 → `lib/models/multitask/`.
 See [the registry mapping table](README.md#model-directories-and-versions) for
-canonical names and aliases. V3 remains an interface skeleton; V4 is the
-implemented UC/LMP multitask model.
+canonical names and aliases. V3 implements the ESA-based UC model described
+in Section 3.1; V4 is the implemented UC/LMP multitask model.
 
 ## 1. Previous Architecture
 
@@ -242,22 +242,23 @@ V2.2 also includes the following stability changes:
 
 #### 2.2.1 Generating Local Marginal Price Labels
 
-`lib/lmp_sover.py` fixes the sample's commitment, startup, and shutdown states and solves a dense LP with Gurobi, supporting samples generated with either dense or lazy constraints. `fixed_commitment_lp_v1` assumes all units are initially off, no balance slack, tolerances of `1e-6`, and only accepts `OPTIMAL`; the same solve produces dispatch and short-term LMP:
+`lib/lmp_sover.py` validates the saved commitment schedule, derives startup and shutdown states assuming all units start off, and builds a continuous fixed-commitment LP directly from the sample. It checks minimum up/down transitions, includes no balance slack, and solves with Gurobi feasibility and optimality tolerances of `1e-6`. Network constraints are added for violated base-case and, for SCUC, contingency flows until all scenarios satisfy the feasibility tolerance. Only `OPTIMAL` LP solutions are accepted. The final solve produces dispatch and short-term LMP from the balance and active network-constraint duals:
 
 `LMP = balance dual + PTDFᵀ × sum of line upper/lower-bound duals + contingency term`
 
-Non-SCUC models omit the last term. The formula requires finite-difference validation; changes to these conventions require a rule-version update.
+Non-SCUC cases omit the contingency term. The pricing solve rebuilds its network scenarios from `UCData`, so it does not depend on whether the sample's UC solution used dense or lazy network constraints. Finite-difference checks of the LMP convention are present in the pricing tests.
 
 #### 2.2.2 Adding Labels to Existing Samples
 
 `label_pricing.py` calls `lib/label_pricing.py` to add:
 
-| Field                                    | Content                                                  |
-| ---------------------------------------- | -------------------------------------------------------- |
-| `lmp_target`                           | `[N,T]`, currency/MWh                                  |
-| `p_target`                             | `[G,T]` unrounded dispatch, MW                         |
-| `pricing_obj` / `pricing_solve_time` | LP objective (including fixed costs) / runtime (seconds) |
-| `pricing_metadata`                     | `pricing_rule`, `uc_sol_sha256`, `uc_type`         |
+| Field                  | Content                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| `lmp_target`         | `[N,T]`, currency/MWh                                                                                 |
+| `p_target`           | `[G,T]` unrounded dispatch, MW                                                                        |
+| `pricing_obj`        | LP objective, including the fixed startup costs                                                         |
+| `pricing_solve_time` | Sum of Gurobi solve times across constraint-generation rounds, in seconds                               |
+| `pricing_metadata`   | `uc_type`, `constraint_generation_rounds`, `network_constraints_added`, `max_network_violation` |
 
 Run in the `lu_uc` environment; the case and UC type are inferred from the path:
 
@@ -265,11 +266,27 @@ Run in the `lu_uc` environment; the case and UC type are inferred from the path:
 python label_pricing.py --sample-dir ../GridUC-Graph/data/case5/samples/tcuc
 ```
 
-By default, all samples are processed and valid labels are skipped; `--sample-id 1` selects one sample, and `--overwrite` forces recomputation. Validated results are saved atomically, preserving the original scenario; the hash covers only the commitment matrix. Failures leave the original file intact and processing continues; failed matrix inversion does not fall back to a pseudoinverse. The console and logs under `log/casexx/lmp_labels/` record status, runtime, and the failure list without tracebacks; any failure results in a nonzero exit code. Integration with new-sample generation and training data remains pending.
+By default, all numbered sample files are processed; `--sample-id 1` selects one file, `--sample-path` selects a file directly, and `--overwrite` recomputes labels that pass the current shape and finiteness checks. The CLI uses spawned worker processes, up to the detected CPU count or the number of samples. Successful results are written atomically to each sample file. Failures leave the original file intact, are summarized in the console and logs under `log/<case>/lmp_labels/`, and cause a nonzero exit code. The current labels have no pricing-rule version or commitment hash, and the skip check does not verify provenance. Processing and multitask training can consume labels added to existing samples; automatic pricing during new-sample generation remains pending.
+
+#### 2.2.3 Model Interface
+
+V4 returns `STGCNOutput` with UC logits `[B, G, T]` and normalized LMP predictions `[B, N, T]`. Both heads share V1's encoders and bus fusion; the UC head selects generator buses, while the LMP head covers every bus.
+
+`lmp_target [B, N, T]` stays in original price units through processing and batching. Multitask training requires labels in both splits. Processing computes `lmp_normalization` from training labels only; the model checkpoint stores its mean and standard deviation. Recover prices with `lmp_pred * lmp_std + lmp_mean`.
+
+#### 2.2.4 Training Process
+
+The current `multitask` training loop updates the shared encoders and both task heads jointly from the start. It uses binary cross-entropy with logits for UC and Huber loss against normalized LMP labels:
+
+```text
+L = L_uc_BCE + lambda_lmp * L_lmp_Huber
+```
+
+`lambda_lmp` and the Huber `delta` are configurable and both default to `1.0`. Each epoch logs UC loss, normalized LMP loss, and their weighted total for the training and held-out test splits. The best checkpoint is selected by test-split UC loss. There is no separate validation split, pretraining stage, automatic `lambda_lmp` tuning, shared-encoder gradient-scale logging, or LMP MAE/RMSE reporting in the current pipeline.
 
 ## 3. Planned Changes
 
-### 3.1 Edge Set Attention
+### 3.1 Edge Set Attention (implemented in V3)
 
 使用 [ESA](https://github.com/davidbuterez/edge-set-attention) 替换现有空间处理，保留时间与空间交替聚合。
 
@@ -295,89 +312,54 @@ By default, all samples are processed and valid labels are skipped; `--sample-id
 
 原版边模式没有现成的母线级输出接口，需新增边到母线读出，首版采用有效入边均值。保留双向边，断线边不得参与注意力或读出，孤立母线通过残差保留自身特征。动态与融合接口需补传线路属性。
 
-### 3.2 多任务学习
+#### 3.1.3 V3 实现审查与待定改动
 
-第一个辅助任务将是**节点边际电价（LMP）**预测。标签不能直接从原始 UC 求解中读取：UC 是一个 MILP，包含整数变量的模型所给出的对偶值不能作为有效的市场价格。因此，这里采用的初始定义是：将样本中的最优开停机决策固定后，通过连续经济调度定价求解得到的短期 LMP。它表示在保持开停机决策不变的情况下，某个母线在某个时段额外供应 1 MW 负荷的边际成本；它并不是允许开停机决策本身发生变化时，通过有限差分计算得到的边际成本。
+**现状**：`lib/models/esa/` 已按 3.1.1–3.1.2 实现，`tests/test_esa.py` 通过。每个 `ESASpatial` 只有一层全局 self-attention，采用 Post-LN，dropout 为 0。
 
-#### 3.2.1 模型接口
+**1. 拓扑 mask（需要）**
 
-扩展 `STGCNInput`、`concat_stgcn_inputs`、`STGCNDataset`、collate 函数以及处理后数据的验证逻辑，加入：
+- 原版 ESA 的节点任务用 NSA：节点作 token，M 层按节点邻接做 mask（如 `M S M S M`），不加 PMA，也不用线路属性；原版边模式只支持图级任务。
+- 原版边模式的 M 层 mask：两条边共享任一端点即相邻（src–src、tgt–tgt、交叉均算）。
+- 方案：沿用边模式的 mask 并**保留对角线**，避免邻边全断时整行被 mask 而输出 NaN；层序列可配置（如 `MS`）。动态分支保留 S 层，以满足全局交互要求。
+- 显存：拓扑在样本间共享，`[E, E]` mask 只构造一次，再与各样本的 `edge_mask` 广播；不要展开为 `[B·T, E, E]`（case2383 在 B=8 时约 6.4 GB）。
 
-- `lmp_target [B, N, T]`，所有节点、时段的电价标签均参与损失和统计计算；
-- 检查所选任务的标签是否齐全，缺失时提示补充。
-- 为处理后的数据增加格式版本，并随模型保存任务配置和归一化参数。
-- 仅用训练集计算电价均值和标准差，供训练、验证、测试及预测统一使用。
-- 根据训练集分布和验证效果决定是否截断极端电价，默认保留。
-- 将预测值还原到原始电价单位，与原始标签比较误差。
+**2. 单向边**
 
-网络应保留共享的静态/动态编码器，并提供独立的任务头：
+- case2383 的 5792 条有向边 = 2896 条线路 × 2；后半段是前半段的翻转，属性和 mask 与前半段相同。双向的两份 token 基本冗余，不是必需的。
+- 收益：注意力计算量和 mask 约降为 1/4，token 激活显存约减半。
+- 配套改动：读出改为按两个端点汇总，并区分起点、终点投影（`W_src`、`W_tgt`）；否则只作起点的母线收不到该线路的信息。
+- 只在 V3 内部取 `edge_index[:, :E/2]`，数据和 V1/V2 不变。按位置去重，不按 (u,v) 对去重（case2383 有 10 对并行线路）；加断言检查后半段是前半段的翻转。
 
-```text
-共享母线表示 [B, N, H]
-|- UC 任务头       -> uc_logits [B, G, T]
-`- LMP 任务头      -> lmp_pred  [B, N, T]
-```
+**3. 显存**：case2383 一次前向加反向的峰值：B=1 为 1.93 GB，B=4 为 7.6 GB；B=8 在 11 GB 的 2080 Ti 上 OOM。改用单向边后需要重新测。
 
-使用结构化输出对象，而不是改变当前单一输出张量的含义。LMP 任务头必须保持母线级别；使用 `gen_bus` 进行选择会错误地丢弃没有发电机的母线上的电价。UC 任务头通过 `gen_bus` 将共享母线表示映射到发电机。
+**4. LN 与 dropout**
 
-#### 3.2.2 训练流程
+- Post-LN `LN(x + f(x))`：每层输出尺度稳定，但梯度要穿过每层 LN，层数多时不稳定（原版用 Admin 初始化缓解）。
+- Pre-LN `x + f(LN(x))`：恒等残差通路，深层训练更稳，需要一个最终 LN；是原版默认。
+- 建议：堆叠 `MS` 后改用 Pre-LN，并把 dropout 暴露到 `STGCNV3Config`（训练集只有 800 个样本）。
 
-预训练阶段可仅用 UC 的 BCE 损失更新共享编码器和 UC 头，也可用 UC+LMP 加权损失共同训练共享编码器与两个任务头；随后进入联合训练阶段，共享编码器与两个任务头共同更新，使用：
+**5. 与 V1 的小差异**
 
-```text
-L = L_uc_BCE + lambda_lmp * L_lmp_Huber
-```
+- 多机母线：V1 用赋值，只保留一台机组（CUDA 上保留哪台不确定）；V3 用求和，但成本、最小启停时间等特征相加没有物理意义。case2383 没有多机母线，两者等价；其他算例需要检查，必要时改为 sum + 机组数，或 sum/mean/max 拼接。
+- PreNorm 位置：V1 在母线级归一化，统计量被约 86% 的无机组零行主导；V3 在机组级归一化，统计量更干净，但无机组母线的 0 与"平均水平的机组"无法区分，可加"是否有机组"指示特征。
 
-在验证集上调整 `lambda_lmp`，分别记录各项原始损失、加权贡献以及共享编码器的梯度尺度，避免总损失的改善掩盖主要 UC 任务的性能下降。
+**待确认问题**
 
-#### 3.2.3 定价标签生成加速计划
+1. M 层方案：采用边模式 mask（共享母线即相邻，保留对角线），层序列可配置，静态、融合、动态默认都用 `MS`，是否同意？还是改用原版 NSA 节点方案（会丢掉线路 token 和线路属性）？
+2. 单向边：在 V3 内部只取单向边，读出改为按两个端点汇总并区分起点、终点投影，是否同意？
+3. 显存：如果改用单向边后，case2383 在 B=8 下仍然 OOM，选哪种处理方式：给 esa 单独调小 batch、gradient checkpointing，还是 AMP 混合精度？
+4. LN 与 dropout：是否改用 Pre-LN，并把 dropout 暴露到 `STGCNV3Config`？
+5. 静态特征：是否给母线加"是否有机组"指示特征？多机母线的聚合要不要从求和改为 sum + 机组数，或 sum/mean/max 拼接？
 
-本节为待实施计划，尚未实现并行或测得加速比。**首选最小方案：样本级多进程 + 每进程线程限额，先测 2 个 worker，再决定是否增加到 4 个。** 目标是提高批量标签吞吐量；单样本运行不受益于样本并行。
-
-**当前依据与原方案比较。** `label_pricing.py` 用串行循环调用 `label_sample()`；每个样本独立加载、重算 PTDF、建立 dense UC、固定启停状态、复制为 LP、求解并保存。代码未显式设置 Gurobi `Threads/Method`，NumPy 底层也可能多线程，因此不能把整个流程视作单线程，更不能仅凭 CPU 利用率推断瓶颈。case2383 的 `tcuc_v2_20260921_201015.log` 中样本 8–11 的端到端耗时约为 48–50 秒，但尚无分阶段计时。
-
-| 方案                      | 主要收益                                   | 改动与约束                                                     | 本次优先级             |
-| ------------------------- | ------------------------------------------ | -------------------------------------------------------------- | ---------------------- |
-| 样本并行（原第 3 项）     | 同时推进独立样本，覆盖建模、求解和结果处理 | 改动集中在调度与线程配置；峰值内存随并发增加                   | 第一阶段，最小可用方案 |
-| PTDF 缓存（原第 1 项）    | 避免相同网络重复矩阵计算                   | 需要可靠缓存键和内存上限；不同拓扑命中率不确定                 | PTDF 耗时占比高时再做  |
-| 批量属性访问（原第 2 项） | 减少逐变量/约束 Python 调用                | 需保持名称、索引和 relax 后模型引用一致；收益取决于耗时占比    | 属性读写成为瓶颈时再做 |
-| LP 模板复用（原第 4 项）  | 减少重建和复制模型                         | 必须完整更新负荷、报价、容量、固定状态及成本系数，验证成本最高 | 暂缓                   |
-
-**第一阶段实现范围。**
-
-1. 在 `label_pricing.py` 增加 `--workers`（默认 1）和 `--solver-threads`（并行时默认 1），采用 `ProcessPoolExecutor` 和 `spawn`。父进程分发唯一文件路径及简单参数；子进程内调用现有 `label_sample()`，沿用每个样本独立创建并释放 Gurobi 环境的方式，不跨进程传递模型或完整样本对象。`--workers 1` 保留串行路径，单文件模式只启动一个执行单元。
-2. 将求解线程参数传到 `solve_pricing()`，在定价 LP 优化前显式设置 `Threads`。并行模式下，在导入 NumPy、启动子进程之前设置 `OMP_NUM_THREADS=1`、`OPENBLAS_NUM_THREADS=1`、`MKL_NUM_THREADS=1`，避免多个 worker 各自争用所有核心。记录实际线程配置；第一阶段不调整 `Method`。
-3. 子进程就地原子保存，只向父进程返回样本 ID、状态、耗时及错误信息。父进程按完成顺序统一写日志和统计，日志名加入 PID 或唯一运行 ID，避免并发启动重名。保留有效标签跳过、`--overwrite`、失败样本汇总及失败时非零退出码；任务异常由父进程记录，进程池异常时报告未完成 ID。一次运行内同一文件只分发一次，也不与其他运行重叠写入同一批样本。
-4. 先测单样本峰值内存，再启动 2 个 worker。设可用 CPU 数为 C、每 worker 求解线程数为 T、并发数为 W，控制 `W × T ≤ C`；以 `W × 单 worker 峰值内存` 加父进程开销估算总内存，并预留至少 25% 可用内存。case2383、case6515 和 SCUC 不直接按 CPU 核数开满；还需确认当前 Gurobi 许可允许所选并发量。
-
-**最小验收与配置选择。** 在独立样本副本上固定选取 12–20 个代表性样本，各配置使用同一输入并强制重新计算，避免有效标签跳过造成虚假提速。比较当前串行配置、`W=1/T=1`、`W=2/T=1`；内存充足且吞吐改善时再测 `W=4/T=1`。分别评估 tcuc/topo/scuc，记录包含进程启动、加载、建模、求解和保存的总墙钟时间、成功样本/秒、失败数及全部 worker 的峰值总内存。`pricing_solve_time` 仍只表示 Gurobi 求解时间，不能拿它代替端到端耗时。选择吞吐量明显提高且无内存压力的最小 W；若并行收益不足或内存受限，回到串行并补充 PTDF、建模、LP 复制、优化、结果提取与读写的分阶段计时，再决定下一步。当前没有依据承诺 2 倍或 4 倍加速。
-
-保持现有固定开停机、完整网络约束、无平衡松弛、初始全停及固定成本约定。当前代码为 `FeasibilityTol = OptimalityTol = 1e-6`（原计划写为 `1e-8`，此处与代码同步），本次加速不调整容差，仅接受 `OPTIMAL`。串行与并行比较完整约束残差、目标值、出力及 LMP，并按 3.2.5 验证有限差分；多重最优解可能导致合法差异，不能只凭 `OPTIMAL` 判定一致，也不要求逐位相同。验证跳过、覆盖、失败文件不变及中断后可重跑。纯调度优化不修改 `PRICING_RULE`；若后续改变定价约定，则更新规则版本并重新验证。
-
-**后续按瓶颈选做。** PTDF 缓存优先使用每进程有容量上限的缓存，键包含网络连接及顺序、电抗、参考节点、故障规则和截断规则；故障集合保持顺序。只缓存 PTDF 时，线路容量及故障后限额仍根据当前样本计算，不复用旧容量。LP 模板复用需完整更新包括 `pwl_cost` 在内的系数，并保留逻辑可行性检查、爬坡约束和固定成本。稀疏 PTDF、算法/基热启动和精确约束生成均留待后续独立评估；约束生成必须检查全部基态与故障潮流、正确映射对偶值，不能直接复用 UC 的 `MIPSOL` 回调。
-
-#### 3.2.4 验证与逐步实施
-
-在生成全部标签之前，使用一个小规模算例和固定的样本子集检查：
-
-- 定价 LP 的状态为 `OPTIMAL`，且调度出力满足功率平衡、发电机、爬坡、基态潮流和预想故障潮流约束；
-- LMP 的形状严格为 `[N, T]`，发电出力的形状严格为 `[G, T]`，所有值均为有限值，且单位一致；
-- 无拥塞时段所有母线的 LMP 在容差范围内相同；
-- 对于选定的 `(母线, 时段)` 对，在保持相同开停机决策的情况下，将负荷增加一个很小的 `epsilon`，定价目标函数值的变化约为 `LMP[bus,period] * epsilon`（在远离基发生变化的位置使用单侧测试）；
-- 连续两次补充标签具有幂等性，写入中断不会损坏样本，且数据处理保留样本数量和原始划分；
-- 短程过拟合测试能够同时降低 UC 和 LMP 损失，随后使用 UC 准确率/变量固定指标以及 LMP MAE/RMSE，对仅使用 UC 与使用 UC+LMP 进行比较。
-
-按以下顺序逐步实施：定价/单元测试、case5 标签补充与训练冒烟测试、一个较大算例的样本子集，然后是全部已有数据集。如果定价规则或有限差分验证发生变化，应停止批量生成，而不是静默接受标签。
-
-### 3.3 学习线路拥堵任务
+### 3.2 学习线路拥堵任务
 
 TBD
 
-### 3.4 模型训练与样本生成同步进行
+### 3.3 模型训练与样本生成同步进行
 
 TBD
 
-### 3.5 Topo & Scuc Together
+### 3.4 Topo & Scuc Together
 
 TBD
 

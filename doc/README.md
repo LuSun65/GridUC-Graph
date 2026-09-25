@@ -61,7 +61,7 @@ There is no CLI. The whole pipeline runs inside a single Python process by calli
 | `stgcn_attn_0` | `lib/models/stgcn_attn/` | Fusion attention |
 | `stgcn_attn_1` | `lib/models/stgcn_attn/` | Dynamic and fusion attention |
 | `stgcn_attn_2` | `lib/models/stgcn_attn/` | Deeper attention network with residual blocks |
-| `esa` | `lib/models/esa/` | ESA interface; computation is not implemented |
+| `esa` | `lib/models/esa/` | V3 edge set attention model for UC prediction |
 | `multitask` | `lib/models/multitask/` | Shared STGCN encoder with UC/LMP heads |
 
 Use these exact names in configuration and model/result/log filenames. Source
