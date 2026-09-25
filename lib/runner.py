@@ -97,7 +97,7 @@ def run_process(case, uc_types, paths, chunk_size, train_ratio):
 
 def run_train(case, uc_types, models, paths, configured_processed_path,
               generated_processed,
-              epochs=20, device="cpu", batch_size=32, random_seed=42,
+              epochs=100, patience=10, device="cpu", batch_size=32, random_seed=42,
               lambda_lmp=1.0, huber_delta=1.0):
     failed = []
     for uc in uc_types:
@@ -111,7 +111,8 @@ def run_train(case, uc_types, models, paths, configured_processed_path,
                 setlog(paths.log_path(case, "train", f"train_{uc}_{m}.log"),
                        overwrite=True),
                 train_model(model_type=m, casename=case, uc_type=uc,
-                            paths=paths, epochs=epochs, device=device,
+                            paths=paths, epochs=epochs, patience=patience,
+                            device=device,
                             batch_size=batch_size,
                             random_seed=random_seed,
                             lambda_lmp=lambda_lmp, huber_delta=huber_delta,
@@ -123,7 +124,7 @@ def run_train(case, uc_types, models, paths, configured_processed_path,
     return failed
 
 
-def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
+def _run_train_on_device(device, tasks, case, paths, epochs, patience, batch_size,
                          random_seed, lambda_lmp=1.0, huber_delta=1.0):
     """Run one queue of training tasks sequentially in a spawned GPU process."""
     failed = []
@@ -135,7 +136,8 @@ def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
                    overwrite=True),
             train_model(
                 model_type=model, casename=case, uc_type=uc, paths=paths,
-                epochs=epochs, device=device, batch_size=batch_size,
+                epochs=epochs, patience=patience, device=device,
+                batch_size=batch_size,
                 random_seed=random_seed, processed_path=source,
                 lambda_lmp=lambda_lmp, huber_delta=huber_delta,
                 expected_sample_count=expected_count,
@@ -148,7 +150,7 @@ def _run_train_on_device(device, tasks, case, paths, epochs, batch_size,
 
 def run_train_parallel(case, uc_types, models, paths,
                        configured_processed_path, generated_processed,
-                       devices, epochs=20, batch_size=32, random_seed=42,
+                       devices, epochs=100, patience=10, batch_size=32, random_seed=42,
                        lambda_lmp=1.0, huber_delta=1.0):
     """Distribute training tasks over devices, with one process per device."""
     devices = tuple(devices)
@@ -184,7 +186,7 @@ def run_train_parallel(case, uc_types, models, paths,
     with ProcessPoolExecutor(max_workers=len(active), mp_context=context) as pool:
         futures = {
             pool.submit(
-                _run_train_on_device, device, queue, case, paths, epochs,
+                _run_train_on_device, device, queue, case, paths, epochs, patience,
                 batch_size, random_seed, lambda_lmp, huber_delta,
             ): (device, queue)
             for device, queue in active
@@ -238,7 +240,7 @@ def run_summary(case, paths, uc_types=("tcuc", "topo", "scuc"),
 
 
 def run_all(case, stages=("sample", "process", "train", "test", "summary"),
-            n_samples=1000, n_test=20, epochs=20, batch_size=32,
+            n_samples=1000, n_test=20, epochs=100, patience=10, batch_size=32,
             device="cpu", workers=None, random_seed=42,
             sample_solver="dense", test_solver="dense",
             uc_types=("tcuc", "topo", "scuc"),
@@ -287,13 +289,13 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
                 failed = run_train(
                     case, uc_types, models, paths, processed_path,
                     generated_processed,
-                    epochs, device, batch_size, random_seed, lambda_lmp, huber_delta,
+                    epochs, patience, device, batch_size, random_seed, lambda_lmp, huber_delta,
                 )
             else:
                 failed = run_train_parallel(
                     case, uc_types, models, paths, processed_path,
                     generated_processed, train_devices,
-                    epochs, batch_size, random_seed, lambda_lmp, huber_delta,
+                    epochs, patience, batch_size, random_seed, lambda_lmp, huber_delta,
                 )
         elif stage == "test":
             failed = run_test(case, uc_types, models, paths, n_test, test_solver, device)

@@ -146,7 +146,8 @@ def train_model(
     paths: ExperimentPaths,
     processed_path,
     expected_sample_count: int = None,
-    epochs: int = 20,
+    epochs: int = 100,
+    patience: int = 10,
     batch_size: int = 32,
     lr: float = 1e-3,
     device: str = "cpu",
@@ -193,10 +194,12 @@ def train_model(
     optimizer = Adam(model.parameters(), lr=lr)
     criterion = nn.BCEWithLogitsLoss()
 
-    print(f"\n[TRAIN] {model_type} | {casename} / {uc_type}  epochs={epochs}  batch={batch_size}  lr={lr}")
+    print(f"\n[TRAIN] {model_type} | {casename} / {uc_type}  epochs={epochs}"
+          f"  patience={patience}  batch={batch_size}  lr={lr}")
 
     best_test_loss = float("inf")
     best_state_dict = None
+    epochs_without_improvement = 0
 
     for epoch in range(1, epochs + 1):
         t0 = time.time()
@@ -216,6 +219,9 @@ def train_model(
         if test_loss < best_test_loss:
             best_test_loss = test_loss
             best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
 
         if epoch % print_interval == 0:
             if multitask:
@@ -232,6 +238,13 @@ def train_model(
                       f"  val_uc={test_loss:.4f}"
                       f"  time={elapsed:.1f}s"
                       f"  {'* saved best' if test_loss == best_test_loss else ''}")
+
+        # Same criterion as checkpoint selection: UC loss only, so multitask
+        # runs do not keep training just because the LMP head still improves.
+        if epochs_without_improvement >= patience:
+            print(f"  [EARLY STOP] test UC loss has not improved for {patience} epochs"
+                  f" (stopped at epoch {epoch}/{epochs})")
+            break
 
     model.load_state_dict({k: v.to(dev) for k, v in best_state_dict.items()})
     model.eval()

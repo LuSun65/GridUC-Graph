@@ -112,7 +112,6 @@ if __name__ == "__main__":
         stages=["sample", "process", "train", "test", "summary"],
         n_samples=1000,
         n_test=20,
-        epochs=50,
         batch_size=32,
         device="mps",
         sample_solver="dense",
@@ -131,7 +130,7 @@ if __name__ == "__main__":
 | `stages` | all five | Any subset of `sample` / `process` / `train` / `test` / `summary`, executed in the given order |
 | `n_samples` | 1000 | Number of samples (indexed 0 ~ n_samples−1) |
 | `n_test` | 20 | Number of test cases |
-| `epochs` / `batch_size` | 20 / 32 | Training hyperparameters |
+| `epochs` / `patience` / `batch_size` | 100 / 10 / 32 | Maximum epochs; stop early after `patience` epochs without a lower test UC loss |
 | `device` | `cpu` | `cpu` / `cuda` / `mps` |
 | `train_devices` | none | Optional device list such as `("cuda:0", "cuda:1", "cuda:2", "cuda:3")`; training tasks are split across one spawned process per device |
 | `workers` | no parallelism | `"auto"` (all cores) or an integer (number of processes) — **effective only in the sample stage** |
