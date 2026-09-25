@@ -39,18 +39,20 @@ def setlog(log_file: str, overwrite: bool = False):
     logger.handlers.clear()
     logger.setLevel(logging.INFO)
 
-    formatter = logging.Formatter('%(message)s')
+    file_formatter = logging.Formatter('[%(asctime)s] %(message)s',
+                                       datefmt='%Y-%m-%d %H:%M:%S')
+    console_formatter = logging.Formatter('%(message)s')
 
     log_dir = os.path.dirname(log_file)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
 
     file_handler = logging.FileHandler(log_file, mode='w' if overwrite else 'a', encoding="utf-8")
-    file_handler.setFormatter(formatter)
+    file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
     console_handler = logging.StreamHandler(sys.__stdout__)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
     sys.stdout = _Std2Log(logger.info)
