@@ -15,14 +15,14 @@ if __name__ == "__main__":
     run_all(
         # Shared.
         case="case2383",
-        stages=["process", "train"],
+        stages=["summary"],
         uc_types=("tcuc", "topo", "scuc"),
         input_root=LOCAL_INPUT_ROOT,
         output_root=PROJECT_ROOT,
-        run_id="checkpoints-v2",
 
         # Train / test / summary.
-        models=("multitask",),
+        models=("mlp", "stgcn", "stgcn_attn_0", "stgcn_attn_1", "stgcn_attn_2", "multitask"),
+        # "mlp", "stgcn", "stgcn_attn_0", "stgcn_attn_1", "stgcn_attn_2", "multitask"
 
         # Train / test.
         device="cuda",
@@ -34,11 +34,10 @@ if __name__ == "__main__":
 
         # Train.
         epochs=50,
-        batch_size=16,
+        batch_size=8,
         train_devices=("cuda:0", "cuda:1", "cuda:2", "cuda:3"),
 
         # Test.
         n_test=20,
         test_solver="lazy",
-        checkpoint_run_id='checkpoints',
     )

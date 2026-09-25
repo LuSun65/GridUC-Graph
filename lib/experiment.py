@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 import os
 
 
@@ -20,37 +19,18 @@ class ExperimentPaths:
     processed tensors. Sampling and processing write their outputs there.
     Models, results, and benchmarks use ``output_root/data/<case>``;
     ordinary logs use ``output_root/log/<case>``.
-    ``checkpoint_run_id`` is accepted for existing callers but no longer
-    selects a separate model directory.
     """
 
     input_root: Path
     output_root: Path
-    run_id: str
-    checkpoint_run_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "input_root", Path(self.input_root))
         object.__setattr__(self, "output_root", Path(self.output_root))
-        _validate_id("run_id", self.run_id)
-        if self.checkpoint_run_id is not None:
-            _validate_id("checkpoint_run_id", self.checkpoint_run_id)
-
-    @property
-    def run_root(self) -> Path:
-        return self.output_root / "runs" / self.run_id
-
-    @property
-    def checkpoint_run_root(self) -> Path:
-        return self.output_root / "data"
 
     def output_case_root(self, casename: str) -> Path:
         _validate_id("casename", casename)
         return self.output_root / "data" / casename
-
-    def run_case_root(self, casename: str) -> Path:
-        _validate_id("casename", casename)
-        return self.run_root / casename
 
     def case_dir(self) -> Path:
         return self.input_root / "case"

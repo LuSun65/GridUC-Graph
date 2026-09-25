@@ -94,7 +94,7 @@ test: add v1-v2 comparison workflow
 
 `tests/` 只用于本地验证，不纳入 Git 版本控制。`.gitignore` 必须保留对应规则；已经被 Git 跟踪的测试文件应仅从索引移除，不能因此删除本地副本。
 
-仓库根目录的 `run_case*.py` 继续由 Git 跟踪，但其中经常包含设备编号、运行阶段、样本数量和 `run_id` 等机器或单次实验相关参数。除非是在有意更新公共默认配置，否则不要提交这类本地调整。可复用的功能实现与实验约定应写入 `lib/` 和 `doc/` 中，运行入口中也不得保存凭据或其他敏感信息。
+仓库根目录的 `run_case*.py` 继续由 Git 跟踪，但其中经常包含设备编号、运行阶段和样本数量等机器或单次实验相关参数。除非是在有意更新公共默认配置，否则不要提交这类本地调整。可复用的功能实现与实验约定应写入 `lib/` 和 `doc/` 中，运行入口中也不得保存凭据或其他敏感信息。
 
 ## 4. 模型源码隔离
 
@@ -164,9 +164,9 @@ checkpoint 的 `architecture_version` 保留原值，用于验证序列化模型
 └── log/<case>/<stage>/...
 ```
 
-模型名称保留调用方传入的原样，包括连字符和下划线。训练与测试读取同一模型路径；`checkpoint_run_id` 保留参数兼容性，但不再选择独立的模型目录。模型、结果和常规日志不再按 `run_id` 隔离，相同 case、UC 类型和模型名对应同一个文件。
+模型名称使用统一的注册名。训练与测试读取同一模型路径；相同 case、UC 类型和模型名对应同一个文件。
 
-benchmark 统一存放在 `data/<case>/benchmarks/`，不再按 `run_id` 隔离。LMP 标签日志存放在 `log/<case>/lmp_labels/`，IIS 诊断文件也不移动。样本和 processed tensors 仍使用 `input_root/<case>/samples/` 和 `input_root/<case>/processed/`。
+benchmark 统一存放在 `data/<case>/benchmarks/`。LMP 标签日志存放在 `log/<case>/lmp_labels/`，IIS 诊断文件也不移动。样本和 processed tensors 仍使用 `input_root/<case>/samples/` 和 `input_root/<case>/processed/`。
 
 ### 5.3 数据共享规则
 
@@ -178,7 +178,7 @@ benchmark 统一存放在 `data/<case>/benchmarks/`，不再按 `run_id` 隔离�
 | checkpoint           |       否 | 与模型架构、配置和训练过程绑定         |
 | result               |       否 | 与模型、测试集和求解参数绑定           |
 | log                  |       否 | 现有日志存在覆盖行为                   |
-| 固定测试集           |       是 | V1/V2 应共享同一个 benchmark           |
+| 固定测试集           |       是 | 不同模型应共享同一个 benchmark           |
 
 ### 5.4 数据管理预案
 
@@ -189,10 +189,10 @@ benchmark 统一存放在 `data/<case>/benchmarks/`，不再按 `run_id` 隔离�
 - 尚未用于正式对比的数据可以原地补齐，但运行开始后不再改变本次使用的样本集合。
 - 已用于正式结果的数据应保留；新增样本放入新的目录或使用明确的文件名后缀，避免旧实验无法复现。
 - 只有输入特征、标签、样本集合、数据划分或 process 逻辑改变时，才重新生成 processed data。
-- V1/V2 公平对比应读取相同的 raw samples 或同一份 processed data，并使用相同的数据划分。
+- 不同模型的公平对比应读取相同的 raw samples 或同一份 processed data，并使用相同的数据划分。
 - 如果未来出现多个长期并存、容易混淆的数据版本，再引入统一的数据版本号或内容校验值；当前不预先实现 `dataset_id`、`dataset_schema_version` 或多层 fingerprint。
 
-V1 legacy processed 缺少完整元数据时，可以先检查样本数、tensor shape 和划分是否符合预期，再作为只读输入使用。process 新生成的 processed data 默认保存在 `input_root/<case>/processed/`，如果使用指向 V1 数据的只读 input_root，不应运行 process；可指定新的可写 input_root。训练和测试产物仍按 run 隔离。
+V1 legacy processed 缺少完整元数据时，可以先检查样本数、tensor shape 和划分是否符合预期，再作为只读输入使用。process 新生成的 processed data 默认保存在 `input_root/<case>/processed/`，如果使用指向 V1 数据的只读 input_root，不应运行 process；可指定新的可写 input_root。训练和测试产物使用稳定的 case 与模型路径。
 
 ## 6. 实验 manifest 与 checkpoint
 
@@ -201,8 +201,6 @@ V1 legacy processed 缺少完整元数据时，可以先检查样本数、tensor
 每个实验目录必须包含 manifest，至少记录：
 
 ```text
-run_id
-comparison_group（可选）
 git_commit
 model_type
 architecture_version
@@ -225,7 +223,7 @@ test suite id
 created_at
 ```
 
-`run_id` 负责唯一定位产物，`comparison_group` 仅在需要汇总若干运行时填写。`sample_count` 应记录实际参与处理的样本数，而不只记录请求数量。`processed_path` 可以指向 V1 的只读 legacy 文件，也可以指向某个 run 新生成的文件；路径之外不强制维护额外的数据 ID 或指纹。
+运行元数据记录每次实验的条件；需要区分重复运行时，可在 manifest 中添加运行标签。`sample_count` 应记录实际参与处理的样本数，而不只记录请求数量。`processed_path` 可以指向 V1 的只读 legacy 文件，也可以指向本地新生成的文件；路径之外不强制维护额外的数据 ID 或指纹。
 
 运行摘要和论文表格应以 manifest 与结构化 result 为依据，不依赖日志文件推断实验条件。`manifest.json` 的具体格式、存放层级和生成方式后续单独讨论。
 
@@ -355,8 +353,8 @@ E0 是后续所有实验的前置条件。
 - generator-to-bus 映射正确。
 - 现有 V1 checkpoint 可以加载和推理。
 - 固定 seed 下 V1 输出可复现。
-- V1/V2 能被同一个 trainer 和 tester 注册、调用。
-- 不同 `run_id` 生成不同产物路径。
+- 不同模型能被同一个 trainer 和 tester 注册、调用。
+- 模型、结果、benchmark 和日志使用统一且可预测的路径。
 - V2 运行不会改变 legacy checkpoint/result 的内容、校验值和修改时间。
 - Attention 在无入边节点、线路全部 masked 等边界情况下不产生 NaN/Inf。
 - case5 能完成一次采样后处理、训练、加载、测试和汇总 smoke test。
@@ -371,8 +369,8 @@ V2 阶段性版本合并或打 tag 前，至少满足：
 - V1 legacy checkpoint 仍可加载。
 - V1 回归测试通过。
 - 共享的 processed data 已检查样本数、shape 和数据划分并保持只读；不兼容的数据重新生成且不覆盖旧文件。
-- V1/V2 的 checkpoint、result 和 log 路径完全隔离。
-- V1/V2 使用同一个固定测试集完成比较。
+- 不同模型的 checkpoint、result 和 log 路径完全隔离。
+- 不同模型使用同一个固定测试集完成比较。
 - Fusion Attention 在 case5 完成端到端测试。
 - case118 至少完成一次受控对比。
 - 每个实验具有完整 manifest，可由 Git commit 和配置复现。
@@ -395,15 +393,15 @@ model-v4.0.0-multitask       # UC/LMP 多任务模型家族
 
 1. V2 开发只在 `feature/stgcn-v2` 对应 worktree 中进行。
 2. V1 源码和 legacy 产物默认只读。
-3. 每次具体运行必须指定唯一的 `run_id`；只有需要汇总对比时才设置可选的 `comparison_group`。
+3. 每次具体运行记录输入、模型、随机种子和训练参数，重复运行的记录放入 manifest。
 4. 新架构先通过 case5，再运行更大的 case。
 5. 每次实验只引入一个主要变量。
 6. 正式实验使用的数据不再原地修改；确需扩充时保留旧文件并记录新路径和样本范围。
 7. 输入特征、标签、样本集合、划分或 process 逻辑改变时重新生成 processed data，否则优先只读复用。
 8. 任何不兼容的 checkpoint 变化都提升 `checkpoint_schema`。
-9. V1/V2 架构对比必须使用相同的数据、样本划分和固定测试集。
+9. 不同模型架构对比必须使用相同的数据、样本划分和固定测试集。
 10. 对比报告必须引用固定测试集和完整 manifest。
 11. 不以复制、重命名临时文件代替正式的运行目录。
 12. 架构决策、已完成改动和实验结论及时回写项目文档。
 
-方案的核心是：使用 Git tag 和 worktree 保护源码基线，使用模型注册表保持运行兼容，以单一 `run_id` 隔离产物，优先只读复用兼容数据，并使用固定 benchmark 保证 V1/V2 比较公平。数据版本体系作为未来确有需要时再启用的预案，而不是当前开发的前置负担。
+方案的核心是：使用 Git tag 和 worktree 保护源码基线，使用模型注册表保持运行兼容，以固定目录层级管理产物，优先只读复用兼容数据，并使用固定 benchmark 保证 不同模型比较公平。数据版本体系作为未来确有需要时再启用的预案，而不是当前开发的前置负担。

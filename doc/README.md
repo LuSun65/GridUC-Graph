@@ -46,7 +46,7 @@ GE-Sampling/
 ├── run_case2383.py
 ├── run_case6515.py
 ├── data/                # default input_root: case definitions and reusable raw samples
-├── runs/                # per-run, case-scoped outputs (gitignored)
+├── log/                 # per-case stage logs (gitignored)
 └── .gitignore
 ```
 
@@ -120,7 +120,6 @@ if __name__ == "__main__":
         workers=None,
         input_root="data",
         output_root=".",
-        run_id="r001",
     )
 ```
 
@@ -141,12 +140,10 @@ if __name__ == "__main__":
 | `uc_types` | all three | A subset of `("tcuc", "topo", "scuc")` |
 | `models` | both | A subset of `("stgcn", "mlp")` |
 | `input_root` | `data` | Read source for `case/*.xlsx` and reusable `<case>/samples/<uc>/*.pkl` |
-| `output_root` | `.` | Writable parent directory for per-run outputs |
-| `run_id` | required | Identifier for this concrete run; one safe path component |
+| `output_root` | `.` | Writable project root for models, results, benchmarks, and logs |
 | `process_chunk_size` | `200` | Number of samples converted per processing chunk |
 | `train_ratio` | `0.8` | Sequential train/test split used when processing |
 | `processed_path` | none | Optional path template such as `/v1/data/{case}/processed/{uc}.pt`; used when the process stage is omitted |
-| `checkpoint_run_id` | none | Optional run ID from which the test stage loads checkpoints; when omitted, checkpoints are loaded from the current `run_id` |
 
 `stages` is the mechanism for resuming: if the models are already trained and you only want to re-evaluate, pass `stages=["test", "summary"]`.
 
@@ -162,7 +159,7 @@ Each task (case × uc_type × model) runs in its own try/except — a failure is
 
 The two models differ in size by three orders of magnitude: on case6515 the MLP's first layer flattens the input into 682,320 dimensions fully connected to 512, for 3.6×10⁸ parameters (1.45GB); the STGCN shares weights over nodes and edges, for 7.5×10⁵ parameters (3.0MB).
 
-**test** — Load or generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Generated cases, including their ground truth, are saved below `data/<case>/benchmarks/` and reused by later test runs when the UC type, solver mode, seed, requested count, and solver configuration match. Training and testing share `<output_root>/data/<case>/model/<uc>_<model>.pt`; `checkpoint_run_id` is accepted for compatibility but no longer selects a separate model directory. Results are stored at `<output_root>/data/<case>/result/<uc>_<model>.pkl`. Models, results, and ordinary logs are not isolated by `run_id`; the same case/type/model uses the same file. Model names are preserved exactly as supplied.
+**test** — Load or generate `n_test` ground truth test cases (the same set is reused by every model under that uc_type, to keep the comparison fair), then evaluate model by model. Generated cases, including their ground truth, are saved below `data/<case>/benchmarks/` and reused by later test runs when the UC type, solver mode, seed, requested count, and solver configuration match. Training and testing share `<output_root>/data/<case>/model/<uc>_<model>.pt`. Results are stored at `<output_root>/data/<case>/result/<uc>_<model>.pkl`. Model names are preserved exactly as supplied.
 
 **summary** — Reprint the summary table from stored results, so format changes need no re-testing (`print_case_summary` in `lib/tester.py`).
 
@@ -191,7 +188,7 @@ If a case fails to solve within the time limit during generation, `FAILED to sol
 
 Crossing them is a supported experiment (e.g. train on `none` labels and evaluate against `dense` ground truth): the mode only changes the MILP's constraint set, not the `UCData` fields, the feature tensors, or the model architecture, so a model trained under any mode can be tested under any mode.
 
-Choose a different `run_id` whenever outputs must be retained separately. Data and comparison details belong in the experiment manifest rather than the directory name.
+Models, results, benchmarks, and logs use stable paths by case and model. Copy artifacts explicitly when a separate snapshot is needed.
 
 Before a sample is written to disk, the dense PTDF matrices are stripped out (a single matrix reaches GB scale on large cases); on read-back, `restore_ptdf` deterministically rebuilds them from the topology and the random draws (`maintenance_line` / `cc_monitor`).
 
@@ -210,18 +207,7 @@ Before a sample is written to disk, the dense PTDF matrices are stripped out (a 
 
 ## Logs
 
-Every stage writes logs automatically below the current run's `<case>/logs/<stage>/` (and also to the terminal). `sample` and `process` both belong to the sampling stage and both write into `sample/`:
-
-```
-runs/<run_id>/<case>/logs/sample/sample_<uc>.log         # append mode (multiprocessing-safe)
-runs/<run_id>/<case>/logs/sample/process_<uc>.log
-runs/<run_id>/<case>/logs/train/train_<uc>_<model>.log   # overwrite mode inside this run only
-runs/<run_id>/<case>/logs/test/gen_<uc>.log              # test case generation
-runs/<run_id>/<case>/logs/test/test_<uc>_<model>.log
-runs/<run_id>/<case>/logs/summary/summary.log
-```
-
-Train/test logs use overwrite mode within one `run_id`. Use a new `run_id` to retain a previous execution.
+Every stage writes logs below `<output_root>/log/<case>/<stage>/` and to the terminal. `sample` and `process` both write into `sample/`. Train and test logs overwrite the same case/model log on each run; copy a log explicitly when you need to retain a snapshot.
 
 ## Input and output directories
 
@@ -248,6 +234,5 @@ When moving between machines: `processed/` is generated deterministically from `
 
 ## .gitignore rules
 
-- `/runs/`: generated run outputs are not committed.
 - `data/` and `log/`: local inputs, models, results, and logs are not committed.
 - Python caches (`__pycache__/` etc.), virtual environments (`.venv/` etc.), IDE configs (`.vscode/`, `.idea/`, `.claude/`), and macOS metadata (`.DS_Store` etc.) are all ignored.

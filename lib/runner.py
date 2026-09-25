@@ -243,9 +243,9 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
             sample_solver="dense", test_solver="dense",
             uc_types=("tcuc", "topo", "scuc"),
             models=("stgcn_attn_0", "stgcn", "mlp"), *,
-            input_root="data", output_root=".", run_id: str,
+            input_root="data", output_root=".",
             processed_path=None, process_chunk_size=200, train_ratio=0.8,
-            train_devices=None, checkpoint_run_id=None,
+            train_devices=None,
             lambda_lmp=1.0, huber_delta=1.0):
     """
     sample_solver / test_solver: transmission-security formulation used when
@@ -264,8 +264,6 @@ def run_all(case, stages=("sample", "process", "train", "test", "summary"),
     paths = ExperimentPaths(
         input_root=input_root,
         output_root=output_root,
-        run_id=run_id,
-        checkpoint_run_id=checkpoint_run_id,
     )
     print(f"[paths] input_root={paths.input_root}")
     print(f"[paths] data_root={paths.output_case_root(case)}")

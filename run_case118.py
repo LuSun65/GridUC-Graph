@@ -19,7 +19,6 @@ if __name__ == "__main__":
         uc_types=("tcuc", "topo", "scuc"),
         input_root=LOCAL_INPUT_ROOT,
         output_root=PROJECT_ROOT,
-        run_id="samples",
 
         # Train / test / summary.
         models=("stgcn_attn_0", "stgcn", "mlp"),
@@ -40,5 +39,4 @@ if __name__ == "__main__":
         # Test.
         n_test=10,
         test_solver="dense",
-        checkpoint_run_id="v2-test",
     )
