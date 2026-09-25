@@ -28,7 +28,7 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "stgcn_attn_0": ModelSpec(STGCN_V2, STGCNV2Config, "2.0", prenorm_warmup=True),
     "stgcn_attn_1": ModelSpec(STGCN_V2_1, STGCNV21Config, "2.1", prenorm_warmup=True),
     "stgcn_attn_2": ModelSpec(STGCN_V2_2, STGCNV22Config, "2.2", prenorm_warmup=True),
-    "esa": ModelSpec(STGCN_V3, STGCNV3Config, "3.0"),
+    "esa": ModelSpec(STGCN_V3, STGCNV3Config, "3.0", prenorm_warmup=True),
     "multitask": ModelSpec(STGCN_V1_Multitask, STGCNConfig, "1.0", prenorm_warmup=True),
 }
 
