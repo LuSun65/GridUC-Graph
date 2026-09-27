@@ -370,7 +370,7 @@ def print_case_summary(casename, uc_types=("tcuc", "topo", "scuc"),
 
     print()
     print("=" * w)
-    print(f"  SUMMARY | case = {casename}")
+    print(f"  SUMMARY | case = {casename} | {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * w)
     print(header)
     print(sep)

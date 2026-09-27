@@ -231,7 +231,8 @@ def run_summary(case, paths, uc_types=("tcuc", "topo", "scuc"),
                 models=("mlp", "stgcn")):
     failed = []
     ok = _run_task(f"summary {case}", lambda: (
-        setlog(paths.log_path(case, "summary", "summary.log"), overwrite=True),
+        setlog(paths.log_path(case, "summary", "summary.log"),
+               overwrite=True, timestamp=False),
         print_case_summary(case, uc_types=uc_types, models=models, paths=paths),
     ))
     if not ok:
