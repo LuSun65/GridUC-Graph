@@ -1,4 +1,4 @@
-"""Static bus encoder for V3."""
+"""Static bus encoder for ESA."""
 
 from dataclasses import dataclass
 
@@ -9,17 +9,17 @@ from lib.models.esa.layer_esa_spatial import ESASpatial, ESASpatialConfig
 
 
 @dataclass
-class StaticModuleV3Config:
+class StaticModuleESAConfig:
     f_node: int
     f_edge: int
     f_hidden: int = 64
     n_heads: int = 4
 
 
-class StaticModuleV3(nn.Module):
+class StaticModuleESA(nn.Module):
     """Encode bus-mapped generator features to [B, N, H]."""
 
-    def __init__(self, config: StaticModuleV3Config):
+    def __init__(self, config: StaticModuleESAConfig):
         super().__init__()
         self.spatial = ESASpatial(ESASpatialConfig(
             config.f_node, config.f_edge, config.f_hidden, config.n_heads

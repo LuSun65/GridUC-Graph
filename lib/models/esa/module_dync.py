@@ -1,4 +1,4 @@
-"""Dynamic bus encoder for V3."""
+"""Dynamic bus encoder for ESA."""
 
 from dataclasses import dataclass
 
@@ -6,11 +6,11 @@ import torch
 from torch import nn
 
 from lib.models.common.layer_mlp import MLPConfig, MLPLayer
-from lib.models.esa.layer_st_conv import STConvBlockV3, STConvV3Config
+from lib.models.esa.layer_st_conv import STConvBlockESA, STConvESAConfig
 
 
 @dataclass
-class DyncModuleV3Config:
+class DyncModuleESAConfig:
     n_period: int
     f_node: int
     f_edge: int
@@ -19,15 +19,15 @@ class DyncModuleV3Config:
     n_heads: int = 4
 
 
-class DyncModuleV3(nn.Module):
+class DyncModuleESA(nn.Module):
     """Two temporal-ESA blocks and full-period collapse to [B, N, H]."""
 
-    def __init__(self, config: DyncModuleV3Config):
+    def __init__(self, config: DyncModuleESAConfig):
         super().__init__()
-        self.block1 = STConvBlockV3(STConvV3Config(
+        self.block1 = STConvBlockESA(STConvESAConfig(
             config.f_node, config.f_edge, config.f_hidden, config.k_t, config.n_heads
         ))
-        self.block2 = STConvBlockV3(STConvV3Config(
+        self.block2 = STConvBlockESA(STConvESAConfig(
             config.f_hidden, config.f_edge, config.f_hidden, config.k_t, config.n_heads
         ))
         self.collapse = nn.Conv2d(config.f_hidden, 2 * config.f_hidden, (config.n_period, 1))

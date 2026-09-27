@@ -5,12 +5,12 @@ import torch.nn as nn
 
 from lib.models.common.layer_mlp import MLPConfig, MLPLayer
 from lib.models.common.layer_pre_norm import PreNormLayer
-from lib.models.stgcn_attn.layer_st_conv_v2_2 import STConvBlockV2_2, STConvV22Config
+from lib.models.stgcn_attn.layer_st_conv_2 import STConvBlock2, STConv2Config
 from lib.models.model_input import DyncGraph
 
 
 @dataclass
-class DyncModuleV22Config:
+class DyncModule2Config:
     n_period: int
     n_node: int
     f_node: int
@@ -20,14 +20,14 @@ class DyncModuleV22Config:
     k_s: int = 3
 
 
-class DyncModuleV2_2(nn.Module):
-    """V2.2 dynamic encoder with two ST blocks of two ChebConv layers."""
+class DyncModule2(nn.Module):
+    """stgcn_attn_2 dynamic encoder with two ST blocks of two ChebConv layers."""
 
-    def __init__(self, config: DyncModuleV22Config):
+    def __init__(self, config: DyncModule2Config):
         super().__init__()
         self.norm = PreNormLayer(config.f_node)
         self.st_blocks = nn.ModuleList([
-            STConvBlockV2_2(STConvV22Config(
+            STConvBlock2(STConv2Config(
                 n_node=config.n_node,
                 k_t=config.k_t,
                 k_s=config.k_s,

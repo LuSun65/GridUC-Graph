@@ -1,1 +1,1 @@
-"""V2, V2.1 and V2.2 attention model components."""
+"""stgcn_attn_0, stgcn_attn_1 and stgcn_attn_2 attention model components."""

@@ -8,7 +8,7 @@ from lib.models.common.layer_temp_conv import TemporalConvConfig, TemporalConvLa
 
 
 @dataclass
-class STConvV22Config:
+class STConv2Config:
     n_node: int
     k_t: int = 3
     k_s: int = 3
@@ -42,12 +42,12 @@ class ResidualChebConvBlock(nn.Module):
         return self.norm(residual + self.alpha * update)
 
 
-class STConvBlockV2_2(nn.Module):
-    """V2.2 ST block with two Chebyshev graph convolutions."""
+class STConvBlock2(nn.Module):
+    """stgcn_attn_2 ST block with two Chebyshev graph convolutions."""
 
     N_CHEB_CONV = 2
 
-    def __init__(self, config: STConvV22Config):
+    def __init__(self, config: STConv2Config):
         super().__init__()
         self.tconv1 = TemporalConvLayer(TemporalConvConfig(
             f_in=config.f_in,

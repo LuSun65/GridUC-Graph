@@ -1,4 +1,4 @@
-"""V3 edge set attention model for UC prediction."""
+"""Edge set attention model for UC prediction."""
 
 from dataclasses import dataclass
 
@@ -6,14 +6,14 @@ import torch
 from torch import nn
 
 from lib.models.common.layer_pre_norm import PreNormLayer
-from lib.models.esa.module_dync import DyncModuleV3, DyncModuleV3Config
-from lib.models.esa.module_fusion import FusionModuleV3, FusionModuleV3Config
-from lib.models.esa.module_static import StaticModuleV3, StaticModuleV3Config
+from lib.models.esa.module_dync import DyncModuleESA, DyncModuleESAConfig
+from lib.models.esa.module_fusion import FusionModuleESA, FusionModuleESAConfig
+from lib.models.esa.module_static import StaticModuleESA, StaticModuleESAConfig
 from lib.models.model_input import STGCNInput
 
 
 @dataclass
-class STGCNV3Config:
+class ESAConfig:
     n_node: int
     n_gen: int
     n_period: int
@@ -25,31 +25,31 @@ class STGCNV3Config:
     n_heads: int = 4
 
 
-class STGCN_V3(nn.Module):
+class ESA(nn.Module):
     """ESA model with the shared STGCN input and [B, G, T] output."""
 
-    def __init__(self, config: STGCNV3Config):
+    def __init__(self, config: ESAConfig):
         super().__init__()
         self.config = config
         self.static_norm = PreNormLayer(config.f_node_s)
         self.dynamic_norm = PreNormLayer(config.f_node_d)
         self.edge_norm = PreNormLayer(config.f_edge)
-        self.static_branch = StaticModuleV3(StaticModuleV3Config(
+        self.static_branch = StaticModuleESA(StaticModuleESAConfig(
             config.f_node_s, config.f_edge, config.f_hidden, config.n_heads
         ))
-        self.dynamic_branch = DyncModuleV3(DyncModuleV3Config(
+        self.dynamic_branch = DyncModuleESA(DyncModuleESAConfig(
             config.n_period, config.f_node_d, config.f_edge,
             config.f_hidden, config.k_t, config.n_heads,
         ))
-        self.fusion = FusionModuleV3(FusionModuleV3Config(
+        self.fusion = FusionModuleESA(FusionModuleESAConfig(
             config.n_period, config.f_edge, config.f_hidden, config.n_heads
         ))
 
     @classmethod
-    def default_config(cls, data: STGCNInput) -> STGCNV3Config:
+    def default_config(cls, data: STGCNInput) -> ESAConfig:
         _, n_gen, f_node_s = data.node_feat_s.shape
         _, n_period, n_node, f_node_d = data.node_feat_d.shape
-        return STGCNV3Config(
+        return ESAConfig(
             n_node=n_node, n_gen=n_gen, n_period=n_period,
             f_node_s=f_node_s, f_node_d=f_node_d,
             f_edge=data.edge_attr.shape[-1],

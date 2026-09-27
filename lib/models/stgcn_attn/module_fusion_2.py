@@ -12,7 +12,7 @@ from lib.models.model_input import FusionGraph
 
 
 @dataclass
-class FusionModuleV22Config:
+class FusionModule2Config:
     n_node: int
     n_gen: int
     n_period: int
@@ -49,12 +49,12 @@ class ResidualGraphAttentionBlock(nn.Module):
         return self.norm(residual + self.alpha * update)
 
 
-class FusionModuleV2_2(nn.Module):
-    """V2.2 fusion encoder with two graph-attention layers."""
+class FusionModule2(nn.Module):
+    """stgcn_attn_2 fusion encoder with two graph-attention layers."""
 
     N_ATTENTION = 2
 
-    def __init__(self, config: FusionModuleV22Config):
+    def __init__(self, config: FusionModule2Config):
         super().__init__()
         self.n_gen = config.n_gen
         self.n_period = config.n_period

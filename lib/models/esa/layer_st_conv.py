@@ -1,4 +1,4 @@
-"""Temporal-spatial-temporal block for V3."""
+"""Temporal-spatial-temporal block for ESA."""
 
 from dataclasses import dataclass
 
@@ -10,7 +10,7 @@ from lib.models.esa.layer_esa_spatial import ESASpatial, ESASpatialConfig
 
 
 @dataclass
-class STConvV3Config:
+class STConvESAConfig:
     f_in: int
     f_edge: int
     f_hidden: int = 64
@@ -18,10 +18,10 @@ class STConvV3Config:
     n_heads: int = 4
 
 
-class STConvBlockV3(nn.Module):
+class STConvBlockESA(nn.Module):
     """Causal temporal convolution, per-time ESA, causal convolution."""
 
-    def __init__(self, config: STConvV3Config):
+    def __init__(self, config: STConvESAConfig):
         super().__init__()
         self.tconv1 = TemporalConvLayer(TemporalConvConfig(config.f_in, config.f_hidden, config.k_t))
         self.spatial = ESASpatial(ESASpatialConfig(

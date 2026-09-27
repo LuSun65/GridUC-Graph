@@ -61,11 +61,20 @@ There is no CLI. The whole pipeline runs inside a single Python process by calli
 | `stgcn_attn_0` | `lib/models/stgcn_attn/` | Fusion attention |
 | `stgcn_attn_1` | `lib/models/stgcn_attn/` | Dynamic and fusion attention |
 | `stgcn_attn_2` | `lib/models/stgcn_attn/` | Deeper attention network with residual blocks |
-| `esa` | `lib/models/esa/` | V3 edge set attention model for UC prediction |
+| `esa` | `lib/models/esa/` | Edge set attention model for UC prediction |
 | `multitask` | `lib/models/multitask/` | Shared STGCN encoder with UC/LMP heads |
 
-Use these exact names in configuration and model/result/log filenames. Source
-packages are unchanged; the attention models still share `stgcn_attn/`.
+Use these exact names in configuration and model/result/log filenames. The attention models share `stgcn_attn/`. Their source files and classes match
+the names printed in the summary:
+
+| Summary name | Source file | Model class | Config class |
+|---|---|---|---|
+| `stgcn_attn_0` | `stgcn_attn_0.py` | `STGCNAttn0` | `STGCNAttn0Config` |
+| `stgcn_attn_1` | `stgcn_attn_1.py` | `STGCNAttn1` | `STGCNAttn1Config` |
+| `stgcn_attn_2` | `stgcn_attn_2.py` | `STGCNAttn2` | `STGCNAttn2Config` |
+
+The ESA model uses `esa/esa.py`, `ESA`, and `ESAConfig`.
+
 Historical model names are recognized only when reading old checkpoint metadata,
 not as names for new calls. Existing checkpoint, result, and log bytes remain
 unchanged; only filenames are renamed. Checkpoint `architecture_version` values
@@ -98,7 +107,7 @@ python run_case6515.py    # case6515: large case, slow to sample and to solve
 ```
 
 The checked-in case scripts resolve `input_root` to the sibling frozen V1
-worktree (`../GridUC-Graph/data`) and write each run directly below this V2
+worktree (`../GridUC-Graph/data`) and write each run directly below the current
 worktree. Adjust `V1_INPUT_ROOT` if the two worktrees are stored elsewhere.
 
 Each script is just a single `run_all` call:

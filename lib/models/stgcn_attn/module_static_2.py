@@ -9,7 +9,7 @@ from lib.models.common.layer_pre_norm import PreNormLayer
 
 
 @dataclass
-class StaticModuleV22Config:
+class StaticModule2Config:
     n_node: int
     f_node: int
     f_edge: int
@@ -71,12 +71,12 @@ class ResidualNNConvBlock(nn.Module):
         return self.norm(residual + self.alpha * update)
 
 
-class StaticModuleV2_2(nn.Module):
-    """V2.2 static encoder with six NNConv layers."""
+class StaticModule2(nn.Module):
+    """stgcn_attn_2 static encoder with six NNConv layers."""
 
     N_NN_CONV = 6
 
-    def __init__(self, config: StaticModuleV22Config):
+    def __init__(self, config: StaticModule2Config):
         super().__init__()
         self.node_norm = PreNormLayer(config.f_node)
         self.edge_norm = PreNormLayer(config.f_edge)

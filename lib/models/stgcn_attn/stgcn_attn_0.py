@@ -15,7 +15,7 @@ from lib.models.stgcn_attn.module_fusion_attention import (
 
 
 @dataclass
-class STGCNV2Config:
+class STGCNAttn0Config:
     n_node: int
     n_gen: int
     n_period: int
@@ -30,7 +30,7 @@ class STGCNV2Config:
     attention_negative_slope: float = 0.2
 
 
-class STGCN_V2(nn.Module):
+class STGCNAttn0(nn.Module):
     """
     Spatio-Temporal Graph Convolutional Network for UC prediction.
 
@@ -41,12 +41,12 @@ class STGCN_V2(nn.Module):
     output: [B, G, n_period]  — logits (training) or sigmoid probs (eval)
     """
 
-    def __init__(self, config: STGCNV2Config):
+    def __init__(self, config: STGCNAttn0Config):
         super().__init__()
         # Keep the in-progress trainer compatible with a V1 STGCNConfig while
-        # ensuring V2 checkpoints always store the complete V2 configuration.
-        if not isinstance(config, STGCNV2Config):
-            config = STGCNV2Config(
+        # ensuring stgcn_attn_0 checkpoints always store the complete stgcn_attn_0 configuration.
+        if not isinstance(config, STGCNAttn0Config):
+            config = STGCNAttn0Config(
                 n_node=config.n_node,
                 n_gen=config.n_gen,
                 n_period=config.n_period,
@@ -91,12 +91,12 @@ class STGCN_V2(nn.Module):
         self.fusion = AttentionFusionModule(fusion_cfg)
 
     @classmethod
-    def default_config(cls, data: STGCNInput) -> STGCNV2Config:
-        """Infer dimensions from input data and retain V2 hyperparameter defaults."""
+    def default_config(cls, data: STGCNInput) -> STGCNAttn0Config:
+        """Infer dimensions from input data and retain stgcn_attn_0 hyperparameter defaults."""
         B, G, f_node_s = data.node_feat_s.shape
         B, T, N, f_node_d = data.node_feat_d.shape
         f_edge = data.edge_attr.shape[-1]
-        return STGCNV2Config(
+        return STGCNAttn0Config(
             n_node      = N,
             n_gen       = G,
             n_period    = T,

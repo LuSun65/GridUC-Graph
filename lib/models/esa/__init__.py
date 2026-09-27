@@ -1,1 +1,1 @@
-"""V3 edge set attention model."""
+"""Edge set attention model."""

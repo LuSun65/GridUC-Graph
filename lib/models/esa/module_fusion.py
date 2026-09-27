@@ -1,4 +1,4 @@
-"""UC prediction head for V3."""
+"""UC prediction head for ESA."""
 
 from dataclasses import dataclass
 
@@ -10,17 +10,17 @@ from lib.models.esa.layer_esa_spatial import ESASpatial, ESASpatialConfig
 
 
 @dataclass
-class FusionModuleV3Config:
+class FusionModuleESAConfig:
     n_period: int
     f_edge: int
     f_hidden: int = 64
     n_heads: int = 4
 
 
-class FusionModuleV3(nn.Module):
+class FusionModuleESA(nn.Module):
     """Fuse bus embeddings and produce generator logits [B, G, T]."""
 
-    def __init__(self, config: FusionModuleV3Config):
+    def __init__(self, config: FusionModuleESAConfig):
         super().__init__()
         self.n_period = config.n_period
         self.f_hidden = config.f_hidden

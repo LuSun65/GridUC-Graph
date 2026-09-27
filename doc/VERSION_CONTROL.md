@@ -5,10 +5,10 @@
 本项目将按照 `doc/NETWORK_CHANGES.md` 逐步修改 STGCN，包括图注意力、节点特征和多任务学习等内容。版本管理需要满足以下要求：
 
 - 当前实现作为 V1 基线保持不变，并且能够随时复现。
-- 后续开发全部在 V2 分支和独立工作目录中进行。
-- V2 可以复用行为完全一致的现有 layer 和 block；需要改变内部逻辑时，应新增 V2 实现，避免改变 V1 行为。
-- V1 与 V2 可以只读共享兼容的 raw samples 和 processed data；新产物不得覆盖已有内容。
-- V1 与 V2 可以使用相同的数据划分和测试场景进行公平比较。
+- 后续开发全部在 stgcn_attn_0 分支和独立工作目录中进行。
+- stgcn_attn_0 可以复用行为完全一致的现有 layer 和 block；需要改变内部逻辑时，应新增 stgcn_attn_0 实现，避免改变 V1 行为。
+- V1 与 stgcn_attn_0 可以只读共享兼容的 raw samples 和 processed data；新产物不得覆盖已有内容。
+- V1 与 stgcn_attn_0 可以使用相同的数据划分和测试场景进行公平比较。
 - 每项网络改动都能单独评估，避免无法区分收益来自架构、特征还是训练配置。
 
 整体采用四层隔离：
@@ -16,11 +16,11 @@
 ```text
 Git 基线
   ├── main：冻结 V1
-  └── feature/stgcn-v2：后续开发
+  └── feature/stgcn-attn：后续开发
 
 源代码
   ├── 原有 STGCN 和 layers：V1 兼容实现
-  └── 新增 V2 模型和 V2 专用模块
+  └── 新增 stgcn_attn_0 模型和 stgcn_attn_0 专用模块
 
 数据与产物
   ├── case、raw samples、processed：兼容时只读共享
@@ -29,7 +29,7 @@ Git 基线
 实验
   ├── 固定测试集
   ├── 实验 manifest
-  └── V1、V2 同条件对比
+  └── V1、stgcn_attn_0 同条件对比
 ```
 
 ## 2. 当前状态与主要风险
@@ -38,14 +38,14 @@ Git 基线
 
 - `main` 位于初始提交 `318c3ec`，适合作为 V1 基线。
 - `doc/NETWORK_CHANGES.md` 尚未被 Git 跟踪。
-- 当前生成数据位于 `data/`，体积较大，不适合为 V2 整体复制。
+- 当前生成数据位于 `data/`，体积较大，不适合为 stgcn_attn_0 整体复制。
 - 当前模型路径为 `data/<case>/model/<uc>_<model>.pt`。
 - 当前结果路径为 `data/<case>/result/<uc>_<model>.pkl`。
 - 当前日志路径也不包含架构版本或实验编号，部分日志采用覆盖模式。
 - 当前测试场景在每次测试运行时重新生成；同一次运行中的模型共享场景，但跨版本、跨时间比较缺少固定 benchmark。
 - 当前 checkpoint 只保存 `config` 和 `state_dict`，缺少架构版本、数据版本和源码提交信息。
 
-因此，仅创建一个 Git 分支并不能保证 V1 与 V2 互不影响。源码、运行产物和对比数据必须同时隔离。
+因此，仅创建一个 Git 分支并不能保证 V1 与 stgcn_attn_0 互不影响。源码、运行产物和对比数据必须同时隔离。
 
 ## 3. Git 分支和工作目录
 
@@ -57,24 +57,24 @@ Git 基线
 git tag -a model-v1.0.0 318c3ec -m "Baseline STGCN v1"
 ```
 
-`main` 用于保存 V1 基线。除非明确决定发布一个 V1 修复版本，否则不在 `main` 上进行 V2 开发。
+`main` 用于保存 V1 基线。除非明确决定发布一个 V1 修复版本，否则不在 `main` 上进行 stgcn_attn_0 开发。
 
-### 3.2 创建 V2 worktree
+### 3.2 创建 stgcn_attn_0 worktree
 
 建议使用独立 worktree，而不是在同一个目录中频繁切换分支：
 
 ```bash
-git worktree add ../GridUC-Graph-v2 -b feature/stgcn-v2 main
+git worktree add ../GridUC-Graph-v2 -b feature/stgcn-attn main
 ```
 
 两个目录的职责为：
 
 ```text
 GridUC-Graph/       # main，V1 基线，原则上只读
-GridUC-Graph-v2/    # feature/stgcn-v2，后续开发和实验
+GridUC-Graph-v2/    # feature/stgcn-attn，后续开发和实验
 ```
 
-当前未跟踪的 `doc/NETWORK_CHANGES.md` 应在执行上述操作时复制或移动到 V2 worktree，并在 V2 分支提交。不要为了保存规划文档而改变 V1 基线提交。
+当前未跟踪的 `doc/NETWORK_CHANGES.md` 应在执行上述操作时复制或移动到 stgcn_attn_0 worktree，并在 stgcn_attn_0 分支提交。不要为了保存规划文档而改变 V1 基线提交。
 
 ### 3.3 提交粒度
 
@@ -85,7 +85,7 @@ docs: add network evolution and version management plans
 test: add baseline model contract tests
 refactor: add model registry and artifact namespace
 feat: add fusion graph attention model
-test: add v1-v2 comparison workflow
+test: add stgcn-attention comparison workflow
 ```
 
 每个提交只处理一类问题。不要在同一个提交中同时进行目录重构、网络修改、特征修改和训练参数调整。
@@ -182,7 +182,7 @@ benchmark 统一存放在 `data/<case>/benchmarks/`。LMP 标签日志存放在 
 
 ### 5.4 数据管理预案
 
-当前阶段不建立独立的数据版本系统。V1、V2 表示模型架构，不表示数据归属；默认继续只读复用现有 raw samples 和 processed data，并在 manifest 中记录实际读取路径、样本数量和 train/test split。
+当前阶段不建立独立的数据版本系统。V1、stgcn_attn_0 表示模型架构，不表示数据归属；默认继续只读复用现有 raw samples 和 processed data，并在 manifest 中记录实际读取路径、样本数量和 train/test split。
 
 后续需要增加训练数据时，按以下简单规则处理：
 
@@ -229,12 +229,12 @@ created_at
 
 ### 6.2 Checkpoint schema
 
-现有 V1 checkpoint 格式继续由 legacy loader 支持。V2 checkpoint 建议使用显式版本：
+现有 V1 checkpoint 格式继续由 legacy loader 支持。stgcn_attn_0 checkpoint 建议使用显式版本：
 
 ```python
 {
     "checkpoint_schema": 2,
-    "model_type": "stgcn_v2",
+    "model_type": "stgcn_attn_0",
     "architecture_version": "2.0",
     "config": {...},
     "state_dict": {...},
@@ -274,7 +274,7 @@ created_at
 
 ### 7.2 控制变量
 
-比较 V1 和 V2 时，以下条件必须一致：
+比较 V1 和 stgcn_attn_0 时，以下条件必须一致：
 
 - raw samples 和 train/test split。
 - 随机种子。
@@ -322,7 +322,7 @@ E0 是后续所有实验的前置条件。
 - 优先在 case5 完成 shape、数值和端到端验证，再运行 case118。
 - 单独统计 attention 的参数量、推理耗时和显存开销。
 
-这是风险最低且最容易解释的首个 V2 架构实验。
+这是风险最低且最容易解释的首个 stgcn_attn_0 架构实验。
 
 ### E2：Dynamic Graph Attention
 
@@ -335,7 +335,7 @@ E0 是后续所有实验的前置条件。
 
 - 在新的 run 目录中重新生成 processed tensors，并在 manifest 中记录来源与处理说明。
 - 保留旧 processed tensors。
-- 同时比较“V1 架构 + 新特征”和“V2 架构 + 新特征”，区分特征收益与架构收益。
+- 同时比较“V1 架构 + 新特征”和“stgcn_attn_0 架构 + 新特征”，区分特征收益与架构收益。
 
 ### E4：Multi-task Learning
 
@@ -355,7 +355,7 @@ E0 是后续所有实验的前置条件。
 - 固定 seed 下 V1 输出可复现。
 - 不同模型能被同一个 trainer 和 tester 注册、调用。
 - 模型、结果、benchmark 和日志使用统一且可预测的路径。
-- V2 运行不会改变 legacy checkpoint/result 的内容、校验值和修改时间。
+- stgcn_attn_0 运行不会改变 legacy checkpoint/result 的内容、校验值和修改时间。
 - Attention 在无入边节点、线路全部 masked 等边界情况下不产生 NaN/Inf。
 - case5 能完成一次采样后处理、训练、加载、测试和汇总 smoke test。
 
@@ -363,7 +363,7 @@ E0 是后续所有实验的前置条件。
 
 ## 10. 发布与验收条件
 
-V2 阶段性版本合并或打 tag 前，至少满足：
+stgcn_attn_0 阶段性版本合并或打 tag 前，至少满足：
 
 - `main` 和 `model-v1.0.0` 未被改变。
 - V1 legacy checkpoint 仍可加载。
@@ -380,18 +380,18 @@ V2 阶段性版本合并或打 tag 前，至少满足：
 
 ```text
 model-v1.0.0                 # 当前基线
-model-v2.0.0-fusion-attn     # Fusion Attention
-model-v2.1.0-dynamic-attn    # Dynamic Attention
-model-v2.2.0-node-features   # 新节点特征
-model-v3.0.0-esa             # ESA（实现后发布）
-model-v4.0.0-multitask       # UC/LMP 多任务模型家族
+model-stgcn_attn_0-2.0.0     # Fusion Attention
+model-stgcn_attn_1-2.1.0    # Dynamic Attention
+model-stgcn_attn_2-2.2.0   # 更深的 attention 网络
+model-esa-3.0.0             # ESA
+model-multitask-4.0.0       # UC/LMP 多任务模型家族
 ```
 
 ## 11. 后续操作原则
 
 完成本方案的初始化后，后续操作遵守以下约定：
 
-1. V2 开发只在 `feature/stgcn-v2` 对应 worktree 中进行。
+1. stgcn_attn_0 开发只在 `feature/stgcn-attn` 对应 worktree 中进行。
 2. V1 源码和 legacy 产物默认只读。
 3. 每次具体运行记录输入、模型、随机种子和训练参数，重复运行的记录放入 manifest。
 4. 新架构先通过 case5，再运行更大的 case。
