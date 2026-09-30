@@ -9,7 +9,6 @@ from lib.models.model_input import STGCNInput
 from lib.models.stgcn_attn.stgcn_attn_0 import STGCNAttn0, STGCNAttn0Config
 from lib.models.stgcn_attn.stgcn_attn_1 import STGCNAttn1, STGCNAttn1Config
 from lib.models.stgcn_attn.stgcn_attn_2 import STGCNAttn2, STGCNAttn2Config
-from lib.models.esa.esa import ESA, ESAConfig
 from lib.models.multitask import STGCN_V1_Multitask
 
 
@@ -28,16 +27,15 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "stgcn_attn_0": ModelSpec(STGCNAttn0, STGCNAttn0Config, "2.0", prenorm_warmup=True),
     "stgcn_attn_1": ModelSpec(STGCNAttn1, STGCNAttn1Config, "2.1", prenorm_warmup=True),
     "stgcn_attn_2": ModelSpec(STGCNAttn2, STGCNAttn2Config, "2.2", prenorm_warmup=True),
-    "esa": ModelSpec(ESA, ESAConfig, "3.0", prenorm_warmup=True),
     "multitask": ModelSpec(STGCN_V1_Multitask, STGCNConfig, "1.0", prenorm_warmup=True),
 }
 
 # Read old checkpoint metadata without rewriting serialized data. These are
 # not accepted as model names in new calls or used in output filenames.
 _LEGACY_CHECKPOINT_NAMES = {
-    **{f"stgcn_v{version}": family for version, family in enumerate(
-        ("stgcn", "stgcn_attn_0", "esa", "multitask"), start=1
-    )},
+    "stgcn_v1": "stgcn",
+    "stgcn_v2": "stgcn_attn_0",
+    "stgcn_v4": "multitask",
     "stgcn-v2": "stgcn_attn_0",
     "stgcn_attn": "stgcn_attn_0",
     "stgcn_v2.1": "stgcn_attn_1",
