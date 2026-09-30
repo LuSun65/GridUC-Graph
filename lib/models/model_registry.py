@@ -10,6 +10,7 @@ from lib.models.stgcn_attn.stgcn_attn_0 import STGCNAttn0, STGCNAttn0Config
 from lib.models.stgcn_attn.stgcn_attn_1 import STGCNAttn1, STGCNAttn1Config
 from lib.models.stgcn_attn.stgcn_attn_2 import STGCNAttn2, STGCNAttn2Config
 from lib.models.multitask import STGCN_V1_Multitask
+from lib.models.esa.esa import ESA, ESAConfig
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "stgcn_attn_0": ModelSpec(STGCNAttn0, STGCNAttn0Config, "2.0", prenorm_warmup=True),
     "stgcn_attn_1": ModelSpec(STGCNAttn1, STGCNAttn1Config, "2.1", prenorm_warmup=True),
     "stgcn_attn_2": ModelSpec(STGCNAttn2, STGCNAttn2Config, "2.2", prenorm_warmup=True),
+    "esa": ModelSpec(ESA, ESAConfig, "3.1", prenorm_warmup=True),
     "multitask": ModelSpec(STGCN_V1_Multitask, STGCNConfig, "1.0", prenorm_warmup=True),
 }
 
@@ -35,6 +37,7 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
 _LEGACY_CHECKPOINT_NAMES = {
     "stgcn_v1": "stgcn",
     "stgcn_v2": "stgcn_attn_0",
+    "stgcn_v3": "esa",
     "stgcn_v4": "multitask",
     "stgcn-v2": "stgcn_attn_0",
     "stgcn_attn": "stgcn_attn_0",
