@@ -3,9 +3,9 @@
 Model family mapping: V1 → `lib/models/stgcn/`; stgcn_attn_0/stgcn_attn_1/stgcn_attn_2 →
 `lib/models/stgcn_attn/`; ESA → `lib/models/esa/`; multitask → `lib/models/multitask/`.
 See [the registry mapping table](README.md#model-names-and-directories) for
-canonical names and aliases. Section 3.1 describes the planned direct ESA
-architecture; the previous three-branch ESA implementation and registry entry
-have been removed. multitask is the implemented UC/LMP multitask model.
+canonical names and aliases. Section 3.1 describes the implemented direct ESA
+encoder with endpoint-mean UC readout, replacing the previous three-branch ESA
+architecture. multitask is the implemented UC/LMP multitask model.
 
 ## 1. Previous Architecture
 
@@ -286,13 +286,13 @@ L = L_uc_BCE + lambda_lmp * L_lmp_Huber
 
 ### 3.1 Edge Set Attention
 
-以 [ESA 官方实现](https://github.com/davidbuterez/edge-set-attention) 为完整模型主干，使用边 token 输入、ESA 注意力堆叠与读出，再适配 UC 预测任务。原方案中的静态、动态、融合三分支、`ESASpatial`、时空卷积块、全周期卷积压缩与时间展开均从本方案移除。
+以 [ESA 官方实现](https://github.com/davidbuterez/edge-set-attention) 的 encoder 为主干，使用边 token 输入和 ESA 注意力堆叠获取边表示，再转换为节点表示，通过 MLP 预测 UC logits。原方案中的静态、动态、融合三分支、`ESASpatial`、时空卷积块、全周期卷积压缩与时间展开均从本方案移除。
 
-**实现状态**：旧三分支实现及 ESA 注册项已移除，`lib/models/esa/esa.py` 暂为空文件；新方案尚未实现。旧模型的测试结果、参数量及显存数据不能作为本方案的验证结果。
+**实现状态**：新方案已在 `lib/models/esa/` 实现并注册为 `esa`，checkpoint 架构版本为 `3.1`；旧三分支 `3.0` checkpoint 不兼容。官方 encoder 固定到 `861a0b12d445ae80cc69b3948af623b4331321d4`（上游采用 MIT 许可证）。旧模型的测试结果、参数量及显存数据不能作为本方案的验证结果。
 
 #### 3.1.1 整体结构
 
-一个样本对应一个完整调度周期的电网图。建议把完整时域按固定时间顺序编码进输入特征，每条线路形成一个边 token；ESA 在整个线路集合上处理该周期的信息。这样不再对每个时刻分别运行空间注意力。
+一个样本对应一个完整调度周期的电网图。将完整时域按固定时间顺序展平并编码进输入特征，每条物理线路保留一个方向，形成一个边 token；ESA 在整个线路集合上处理该周期的信息。这样不再对每个时刻分别运行空间注意力。
 
 ```text
 机组静态特征 [B,G,F_node_s]
@@ -302,34 +302,50 @@ L = L_uc_BCE + lambda_lmp * L_lmp_Huber
 
 线路两端的母线特征 + 线路属性（含线路容量约束）
 -> 边 token 嵌入 [B, L, H]
--> ESA：拓扑 masked attention（M）与全局 self-attention（S）堆叠
--> 读出（待确认）
--> UC 输出头
+-> ESA encoder：拓扑 masked attention（M）与全局 self-attention（S）堆叠
+-> 边表示 [B, L, H]
+-> 边表示拼接接收端母线输入，经共享消息 MLP 得到端点消息
+-> 按节点对关联线路消息取 mean [B, N, H]
+-> 拼接母线输入，经节点 MLP 得到节点表示 [B, N, H]
+-> 按 gen_bus 选取机组母线表示 [B, G, H]
+-> 共享 MLP（H -> T）
 -> logits [B, G, T]
 ```
 
-`L` 为适配后的边 token 数，`H` 为隐藏维度。ESA 的 M/S 注意力、前馈层、残差、归一化与读出优先复用官方实现，接入时固定上游版本。具体层序列、深度、头数和 dropout 作为配置暴露；首轮实验配置应记录清楚，不沿用旧 STGCN 的 `k_t`、`k_s` 或三分支配置。
+`L` 为物理线路数（每条线路一个边 token），`H` 为隐藏维度。ESA encoder 的 M/S 注意力、前馈层、残差与归一化优先复用官方实现，接入时固定上游版本；边到节点的聚合与 UC MLP 输出头由本项目适配。具体层序列、深度、头数和 dropout 作为配置暴露；首轮实验配置应记录清楚，不沿用旧 STGCN 的 `k_t`、`k_s` 或三分支配置。
 
 #### 3.1.2 UC 输入与输出适配
 
 继续使用现有数据字段，并保持训练输出为 `logits [B,G,T]`，采用 UC BCE-with-logits 损失。数据接口名 `STGCNInput` 可以暂时复用。
 
-- **时间信息**：建议将 `node_feat_d [B,T,N,F_node_d]` 按固定时序重排为 `[B,N,T*F_node_d]`，作为母线输入的一部分。时间位置由特征槽位区分；首版对应固定调度长度 T。该方案一次使用完整预测周期的已知负荷与报价，不保留时间卷积或逐时因果预测假设。
+- **时间信息**：将 `node_feat_d [B,T,N,F_node_d]` 按固定时序重排为 `[B,N,T*F_node_d]`，作为母线输入的一部分。时间位置由特征槽位区分；首版对应固定调度长度 T。该方案一次使用完整预测周期的已知负荷与报价，不保留时间卷积或逐时因果预测假设。
 - **机组信息**：当前实验保证每条母线至多有一台机组。采用与 STGCN 的 `_gen_to_nodal()` 相同的映射：先创建全零母线张量 `x [B,N,F_node_s]`，再执行 `x[:, gen_bus, :] = node_feat_s`，无机组母线保持零值。映射后与展平的动态特征拼接。以 case2383 为例，静态特征为 8 维，动态特征为 `24*4=96` 维，拼接后的母线输入为 `[B,2383,104]`。
 - **线路信息**：保留线路电抗、容量上限，以及 SCUC 数据中的 contingency-monitor 指示特征和 TOPO 数据中的 maintenance 指示特征。模型使用这些特征学习预测。
 - **拓扑有效性**：当前实验保留全部线路 token，数据与模型接口不再包含 `edge_mask`；TOPO 检修线路采用 soft outage，两个方向的电抗加倍、容量不变，并将 maintenance 指示特征置 1。各算例基础拓扑没有孤立母线，soft outage 不新增孤立母线；固定算例的线路数相同，无需 padding。注意力保持 batch 内样本隔离，M 层仍按线路共享端点使用拓扑 mask。
 
-读出建议采用原版图级方案：`ESA → PMA 图表示 → UC MLP → [B,G*T] → [B,G,T]`，具体采用与否仍待确认。输入端使用映射后的母线特征；输出端继续按现有标签的固定机组顺序输出 UC logits，不改为母线级标签。该输出头要求固定 G、T。
+读出采用边到节点方案：`ESA encoder → 边表示 [B,L,H] → 节点表示 [B,N,H] → 按 gen_bus 选取机组母线表示 [B,G,H] → 共享 MLP → UC logits [B,G,T]`。encoder 保留逐边对应关系，按线路端点映射将边表示聚合为节点表示；每条线路通过共享消息 MLP 分别向两个端点生成消息，按节点对关联线路消息取 mean，再通过节点 MLP 得到节点表示。不采用 PMA 图级池化。输入端使用映射后的母线特征；输出端按现有标签的机组顺序预测每台机组的 UC logits。共享 MLP 将每台机组的 H 维表示映射为 T 个时段的 logits，输出头要求固定 T，其参数维度不依赖 G。
+
+
+边到节点转换具体定义如下，其中 `x_v` 为完成输入归一化后的母线静态特征与完整时域展平特征，维度为 `F = F_node_s + T*F_node_d`；`h_e` 为 ESA encoder 输出的 H 维边表示：
+
+```text
+m_(e->v) = MLP_message(concat(h_e, x_v))          # [H]，对线路的两个端点分别计算
+mean_v   = sum(m_(e->v) for e incident to v) / degree(v)
+h_v      = MLP_node(concat(x_v, mean_v))         # [H]
+logits_g = MLP_uc(h_(gen_bus[g]))                # [T]，输出不加 sigmoid
+```
+
+`MLP_message` 在所有线路及两个端点间共享参数；`MLP_node` 在所有节点间共享参数；`MLP_uc` 在所有机组间共享参数。三者是独立网络，不互相共享参数。消息 MLP 和节点 MLP 均将 `H+F` 维输入映射到 H 维；消息中加入接收端母线特征，使同一条线路能对两个端点产生不同消息。mean 按每个节点关联的物理线路数归一化，平行线路分别计数，聚合限制在各自样本内。若节点没有关联线路，将 `mean_v` 置零，节点 MLP 仍保留其自身输入。此转换位于 ESA attention encoder 之后。
 
 #### 3.1.3 拓扑、归一化与配置
 
-M 层按线路共享端点构造局部连接，S 层允许同一样本内所有有效边交互；具体 mask 的布尔含义与对角线行为应按接入版本核对。拓扑连接与有效性 mask 分别管理，拓扑相同的样本可复用结构信息。
+M 层按线路共享端点构造局部连接，S 层允许同一样本内所有边交互。PyTorch SDPA mask 中 True 表示允许注意，保留对角线；修正了固定上游版本 torch 分支将邻接关系取反的行为。模型缓存共享 `[1,1,L,L]` 拓扑 mask，不扩展 B/T 维；当前固定算例无需 padding 或有效性 mask。
 
-线路 token 的粒度待确认：保留现有双向边最便于接入；每条物理线路一个 token 可以减少序列长度，但需要明确端点顺序和方向编码。若从现有双向数据提取物理线路，必须校验反向配对的拓扑、属性与停运状态，并保留平行线路。
+线路 token 采用单向表示：每条物理线路任意保留一个方向，预处理后固定该端点顺序，训练与推理保持一致。该方向仅用于存储，边到节点聚合时同时向两个端点传递信息。共享数据仍保留双向边，仅在 ESA 输入适配时提取每条线路的一份；必须校验反向配对的拓扑、属性与检修标志，按物理线路配对去重，保留平行线路。任意选定方向不等同于模型天然具有端点交换不变性；若边嵌入拼接有序端点特征，应始终保持选定的顺序。
 
-注意力层内部的归一化、残差与 dropout 沿用选定的 ESA 配置。输入特征的归一化另行处理，只使用训练集统计量。若继续使用 `PreNormLayer`，预热仅收集原始输入统计，不必执行 ESA 主干；其统计口径应与最终输入适配一致。
+注意力层内部的归一化、残差与 dropout 沿用选定的 ESA 配置。输入特征的归一化另行处理，只使用训练集统计量。使用 `PreNormLayer`，预热仅收集母线拼接输入及单向线路属性的统计，不执行 ESA 主干；统计口径与最终输入适配一致。
 
-新配置需保存上游版本、输入编码方式、边表示方式、ESA 层序列、维度与头数、归一化与 dropout、读出类型，以及 G/T 和机组顺序约定。新架构需要重新训练，旧三分支 checkpoint 不作直接兼容承诺。
+新配置需保存上游版本、输入编码方式、边表示方式、ESA 层序列、维度与头数、归一化与 dropout、边到节点的 mean 聚合与方向处理、消息 MLP/节点 MLP/UC MLP 配置，以及 G/T 和机组顺序约定。新架构需要重新训练，旧三分支 checkpoint 不作直接兼容承诺。
 
 #### 3.1.4 大图显存与验证
 
@@ -339,16 +355,26 @@ M 层按线路共享端点构造局部连接，S 层允许同一样本内所有�
 
 实施与验收顺序：
 
-1. 确定输入编码、读出与边 token 方案，固定官方 ESA 版本并完成 UC 适配。
-2. 小图验证机组到母线的映射（与 STGCN 直接赋值结果一致、无机组母线填零）、输出形状、机组顺序、soft outage 的双向电抗与容量、平行线路以及样本隔离；完成有限损失、反向梯度和一次优化器更新检查。
+1. 按完整时域展平输入和每条物理线路一个 token 的方案，采用共享消息 MLP、mean 聚合与节点 MLP，固定官方 ESA 版本并完成 UC 适配。
+2. 小图验证机组到母线的映射（与 STGCN 直接赋值结果一致、无机组母线填零）、边到节点聚合的双端点映射与 mean 归一化、关联线路排列不变性、零度节点处理、输出形状、机组顺序、soft outage 的双向电抗与容量、平行线路以及样本隔离；完成有限损失、反向梯度和一次优化器更新检查。
 3. 检查特征归一化只使用训练集统计；验证新 checkpoint 保存/加载后的预测一致性。
 4. 在 case2383 目标 GPU 上以 `batch_size=1` 起步，分别测量预处理/预热、训练前向、反向、优化器更新及验证阶段的峰值显存与耗时；记录设备、运行版本、dtype 和实际注意力后端。
 5. 跑通训练及验证 epoch，再调整 batch size、ESA 深度与隐藏维度，比较 UC 预测效果与现有基线。
 
-#### 3.1.5 待确认的设计选择
 
-1. 是否采用完整时域展平输入，并使用原版 ESA + PMA + 固定 `[G*T]` UC 输出头？
-2. 边 token 保留双向，还是每条物理线路一个 token？
+本次实现与验证记录：
+
+- 默认 `f_hidden=64`、`n_heads=4`、`layer_types="MSMS"`（层序列长度即深度），Pre-LN，标准 Mish MLP，`mlp_hidden=128`、`mlp_layers=2`；attention、residual、MLP dropout 均为 0。以上维度、层序列、头数、MLP 和 dropout 参数可通过 `config_overrides` 设置，`gradient_checkpointing=True` 可启用逐块重计算。
+- 保留上游 normalized-input Pre-LN 残差、外层 encoder 输入残差与最终 Linear+Mish。仅使用 PyTorch SDPA，无需安装 ESA、xformers 或 flash-attn；CPU 强制 math 后端，避免当前 PyTorch 2.3.1 fused CPU attention 在大尺寸稀疏 mask 下的 NaN；CUDA 自动选择可用后端。
+- `OMP_NUM_THREADS=1 python -m unittest discover -s tests/models -p 'test_esa_contract.py' -v`：9 项通过，覆盖输入映射、反向配对校验、平行线路、局部/全局注意力、样本隔离、双端点 mean、孤立节点、排列性质、预热统计、前后向/优化器更新、checkpoint 往返与旧版本拒绝、dropout 推理确定性、梯度重计算和大尺寸稀疏 mask。
+- case5 和 case2383 TOPO 输入通过 CPU 训练/验证流程检查。case2383 使用 2,896 个边 token，母线输入 `[1,2383,104]`，输出 `[1,327,24]`，默认模型 244,632 参数；FP32、batch=1、启用梯度重计算时，单样本预热约 0.005 s、训练更新约 3.0 s、验证约 0.81 s（当前环境 PyTorch 2.3.1+cu121，单 CPU 线程）。检查使用零占位 UC 标签，验证数值和流程，不代表预测效果或完整数据集训练结果。
+- 当前 NVIDIA 驱动不可用，目标 GPU 的峰值显存、实际 CUDA attention 后端及真实标签训练评估尚未验证。
+
+#### 3.1.5 已确认的设计选择
+
+1. 完整时域按固定顺序展平，作为母线输入特征。
+2. 每条物理线路保留一个方向，形成一个边 token；固定端点顺序，并保留平行线路。
+3. ESA encoder 输出边表示，经共享消息 MLP、双端点 mean 聚合和节点 MLP 转换为节点表示，再按机组母线选取表示并通过 UC MLP 预测 logits。
 
 ### 3.2 学习线路拥堵任务
 
