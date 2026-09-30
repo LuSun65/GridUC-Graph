@@ -32,7 +32,6 @@ if __name__ == "__main__":
         workers=None,
 
         # Train.
-        epochs=30,
         batch_size=4,
         train_devices=("cuda:0", "cuda:1", "cuda:2", "cuda:3"),
 

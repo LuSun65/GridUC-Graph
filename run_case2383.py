@@ -15,14 +15,14 @@ if __name__ == "__main__":
     run_all(
         # Shared.
         case="case2383",
-        stages=["summary"],
-        uc_types=("tcuc", "topo", "scuc"),
+        stages=["summary",],
+        uc_types=("tcuc", "topo", "scuc", ),
         input_root=LOCAL_INPUT_ROOT,
         output_root=PROJECT_ROOT,
 
         # Train / test / summary.
-        models=("mlp", "stgcn", "stgcn_attn_0", "stgcn_attn_1", "stgcn_attn_2", "multitask"),
-        # "mlp", "stgcn", "stgcn_attn_0", "stgcn_attn_1", "stgcn_attn_2", "multitask"
+        models=("mlp", "stgcn", "stgcn_attn_0", "stgcn_attn_1", "stgcn_attn_2", "multitask", "esa"),
+        # "mlp", "stgcn", "stgcn_attn_0", "stgcn_attn_1", "stgcn_attn_2", "multitask", "esa"
 
         # Train / test.
         device="cuda",
@@ -33,11 +33,10 @@ if __name__ == "__main__":
         workers=4,
 
         # Train.
-        epochs=50,
-        batch_size=8,
+        batch_size=4,
         train_devices=("cuda:0", "cuda:1", "cuda:2", "cuda:3"),
 
         # Test.
-        n_test=20,
+        n_test=40,
         test_solver="lazy",
     )

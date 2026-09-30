@@ -31,7 +31,6 @@ if __name__ == "__main__":
         workers=4,
 
         # Train.
-        epochs=50,
         batch_size=32,
 
         # Test.
