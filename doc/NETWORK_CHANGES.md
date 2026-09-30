@@ -3,8 +3,9 @@
 Model family mapping: V1 → `lib/models/stgcn/`; stgcn_attn_0/stgcn_attn_1/stgcn_attn_2 →
 `lib/models/stgcn_attn/`; ESA → `lib/models/esa/`; multitask → `lib/models/multitask/`.
 See [the registry mapping table](README.md#model-names-and-directories) for
-canonical names and aliases. ESA implements the ESA-based UC model described
-in Section 3.1; multitask is the implemented UC/LMP multitask model.
+canonical names and aliases. Section 3.1 describes the planned direct ESA
+architecture; the previous three-branch ESA implementation and registry entry
+have been removed. multitask is the implemented UC/LMP multitask model.
 
 ## 1. Previous Architecture
 
@@ -19,7 +20,6 @@ The model consumes one `STGCNInput` dataclass and produces UC logits:
 - `edge_index [2, E]`: shared directed graph topology. Each physical line is represented in both directions.
 - `edge_attr [B, E, F_edge]`: per-sample edge features.
 - `gen_bus [G]`: bus index for each generator.
-- `edge_mask [B, E]`: per-sample active-line mask, where `1` means active and `0` means removed or under maintenance.
 - `uc_target [B, G, T]`: binary UC schedule target, used during training.
 - Output `logits [B, G, T]`: one binary on/off logit per generator and time period.
 
@@ -28,7 +28,7 @@ The model consumes one `STGCNInput` dataclass and produces UC logits:
 - Static generator features include `pmax`, `pmin`, ramp up/down, min up/down, production cost, and startup cost.
 - Dynamic node features include bus demand by time period plus bid-price segment features aggregated from generators to their buses.
 - Edge features include line reactance and line flow limit. For SCUC data, an additional contingency-monitor indicator is appended.
-- Maintenance lines are encoded through `edge_mask`, zeroing both directed copies of the affected line.
+- Maintenance uses soft outage: all connections are retained, both directed copies have doubled reactance, and their capacity limits remain unchanged, matching the TOPO solver.
 
 ### 1.2 Top-Level STGCN Flow
 
@@ -85,7 +85,6 @@ node features [B, N, f_in]
 
 x_src [B, E, f_in] and W [B, E, f_in, H]
 -> einsum message [B, E, H]
--> apply edge_mask [B, E, H]
 -> scatter_add to destination nodes [B, N, H]
 -> ReLU [B, N, H]
 
@@ -101,14 +100,13 @@ node features [B, N, f_in] = [B, N, H]
 
 x_src [B, E, f_in] and W [B, E, f_in, H]
 -> einsum message [B, E, H]
--> apply edge_mask [B, E, H]
 -> scatter_add to destination nodes [B, N, H]
 -> ReLU [B, N, H]
 -> Linear projection [B, N, f_out]
 -> x_static [B, N, f_out] = [B, N, H]
 ```
 
-The two `NNConvLayer` blocks are edge-conditioned graph convolutions. Each block uses `edge_attr` to generate and reshape one weight matrix `W [B, E, f_in, H]` per directed edge, applies `edge_mask` to remove inactive lines, and aggregates source-node messages to destination buses. The final projection has shape `[B, N, f_out]`; it is also `[B, N, H]` in `STGCN` because `StaticModuleConfig.f_out = STGCNConfig.f_hidden`.
+The two `NNConvLayer` blocks are edge-conditioned graph convolutions. Each block uses `edge_attr` to generate and reshape one weight matrix `W [B, E, f_in, H]` per directed edge, and aggregates source-node messages to destination buses. The final projection has shape `[B, N, f_out]`; it is also `[B, N, H]` in `STGCN` because `StaticModuleConfig.f_out = STGCNConfig.f_hidden`.
 
 ### 1.4 Dynamic Branch
 
@@ -152,7 +150,7 @@ input [B, T, N, f_in]
 -> LayerNorm [B, T, N, f_out]
 ```
 
-The temporal convolutions preserve the time dimension with causal padding. The `ChebConvLayer` performs masked spectral graph convolution at each time step, using `edge_mask [B * T, E]` after expanding and reshaping `edge_mask [B, E]`. Both `STConvBlock` instances set `f_out = f_hidden`; the first sets `f_in = f_node = F_node_d`, while the second sets `f_in = f_hidden`. The projection output is `[B, N, f_out]`, which becomes `x_dynamic [B, N, H]` because `DyncModuleConfig.f_out = STGCNConfig.f_hidden`.
+The temporal convolutions preserve the time dimension with causal padding. The `ChebConvLayer` performs spectral graph convolution at each time step using the complete shared topology. Both `STConvBlock` instances set `f_out = f_hidden`; the first sets `f_in = f_node = F_node_d`, while the second sets `f_in = f_hidden`. The projection output is `[B, N, f_out]`, which becomes `x_dynamic [B, N, H]` because `DyncModuleConfig.f_out = STGCNConfig.f_hidden`.
 
 ### 1.5 Fusion Branch
 
@@ -179,31 +177,31 @@ output MLP:
 -> logits [B, G, T]
 ```
 
-The Fusion `ChebConvLayer` propagates information across the masked bus graph after static and dynamic embeddings have been combined. Its input is `[B, N, 2 * f_in]`, which is also `[B, N, 2 * H]` because `FusionModuleConfig.f_in = STGCNConfig.f_hidden`. The generator-bus selection maps bus embeddings back to generator-level representations before producing one commitment logit per generator and time period. Here `n_period = T`.
+The Fusion `ChebConvLayer` propagates information across the bus graph after static and dynamic embeddings have been combined. Its input is `[B, N, 2 * f_in]`, which is also `[B, N, 2 * H]` because `FusionModuleConfig.f_in = STGCNConfig.f_hidden`. The generator-bus selection maps bus embeddings back to generator-level representations before producing one commitment logit per generator and time period. Here `n_period = T`.
 
 ## 2. Completed Changes
 
 ### 2.1 Graph Attention Layer
 
-This section covers the introduction of masked graph attention layers in the Fusion and Dynamic branches, increased network depth, and normalization and residual connection improvements for training stability.
+This section covers the introduction of graph attention layers in the Fusion and Dynamic branches, increased network depth, and normalization and residual connection improvements for training stability.
 
 #### 2.1.1 Fusion Attention (stgcn_attn_0)
 
-stgcn_attn_0 keeps the V1 input/output contract and the existing Static and Dynamic branches unchanged. The only structural change is in the Fusion branch, where `ChebConvLayer` is replaced by a masked multi-head `GraphAttentionLayer`:
+stgcn_attn_0 keeps the V1 input/output contract and the existing Static and Dynamic branches unchanged. The only structural change is in the Fusion branch, where `ChebConvLayer` is replaced by a multi-head `GraphAttentionLayer`:
 
 ```text
 x_static [B, N, H] + x_dynamic [B, N, H]
 -> concat [B, N, 2 * H]
--> masked multi-head GraphAttentionLayer [B, N, H]
+-> multi-head GraphAttentionLayer [B, N, H]
 -> generator-bus selection and output MLPs
 -> logits [B, G, T]
 ```
 
-Attention is normalized over each destination bus's active incoming edges using `edge_mask`. Each bus also has an always-active self-loop so that its own representation is retained and isolated buses remain valid.
+Attention is normalized over each destination bus's incoming edges in the complete topology. Each bus also has an always-active self-loop so that its own representation is retained and isolated buses remain valid.
 
 #### 2.1.2 Dynamic Attention (stgcn_attn_1)
 
-stgcn_attn_1 keeps the V1 input/output contract and Static branch unchanged, and retains the stgcn_attn_0 attention-based Fusion branch. The Dynamic branch now also replaces the spatial `ChebConvLayer` in both `STConvBlock`s with masked multi-head `GraphAttentionLayer`s applied independently at each time step:
+stgcn_attn_1 keeps the V1 input/output contract and Static branch unchanged, and retains the stgcn_attn_0 attention-based Fusion branch. The Dynamic branch now also replaces the spatial `ChebConvLayer` in both `STConvBlock`s with multi-head `GraphAttentionLayer`s applied independently at each time step:
 
 ```text
 node_feat_d [B, T, N, F_node_d]
@@ -217,18 +215,18 @@ x_static [B, N, H] + x_dynamic [B, N, H]
 -> logits [B, G, T]
 ```
 
-Both Dynamic and Fusion attention use `edge_mask` and always-active self-loops. The default configuration uses four attention heads.
+Both Dynamic and Fusion attention retain all graph edges and add one self-loop per bus. The default configuration uses four attention heads.
 
 #### 2.1.3 Network Depth and Stability (stgcn_attn_2)
 
 stgcn_attn_2 changes network depth. Current receptive-field baseline（for case 2383):
 
-| Model | Parameters (case2383 SCUC) |    Static encoder |                             Dynamic encoder |                Fusion layer | Max static-to-output spatial RF | Max dynamic-to-output spatial RF | Temporal RF before collapse |          Final temporal RF |
-| ----- | -------------------------: | ----------------: | ------------------------------------------: | --------------------------: | ------------------------------: | -------------------------------: | --------------------------: | -------------------------: |
-| V1    |                    751,169 | 2 NNConv = 2 hops |                   2 Cheb ST blocks = 4 hops | Cheb (`k_s = 3`) = 2 hops |                          4 hops |                           6 hops |                     9 steps | Full input horizon (`T`) |
-| stgcn_attn_0  |                    734,913 | 2 NNConv = 2 hops |                   2 Cheb ST blocks = 4 hops |               1 GAT = 1 hop |                          3 hops |                           5 hops |                     9 steps | Full input horizon (`T`) |
-| stgcn_attn_1  |                    718,785 | 2 NNConv = 2 hops |                    2 GAT ST blocks = 2 hops |               1 GAT = 1 hop |                          3 hops |                           3 hops |                     9 steps | Full input horizon (`T`) |
-| stgcn_attn_2  |                  1,846,529 | 6 NNConv = 6 hops | 2 ST blocks, each with 2 ChebConv = 8 hops |             2 GAT = 2 hops |                          8 hops |                          10 hops |                     9 steps | `Full input horizon (T)` |
+| Model        | Parameters (case2383 SCUC) |    Static encoder |                             Dynamic encoder |                Fusion layer | Max static-to-output spatial RF | Max dynamic-to-output spatial RF | Temporal RF before collapse |          Final temporal RF |
+| ------------ | -------------------------: | ----------------: | ------------------------------------------: | --------------------------: | ------------------------------: | -------------------------------: | --------------------------: | -------------------------: |
+| V1           |                    751,169 | 2 NNConv = 2 hops |                   2 Cheb ST blocks = 4 hops | Cheb (`k_s = 3`) = 2 hops |                          4 hops |                           6 hops |                     9 steps | Full input horizon (`T`) |
+| stgcn_attn_0 |                    734,913 | 2 NNConv = 2 hops |                   2 Cheb ST blocks = 4 hops |               1 GAT = 1 hop |                          3 hops |                           5 hops |                     9 steps | Full input horizon (`T`) |
+| stgcn_attn_1 |                    718,785 | 2 NNConv = 2 hops |                    2 GAT ST blocks = 2 hops |               1 GAT = 1 hop |                          3 hops |                           3 hops |                     9 steps | Full input horizon (`T`) |
+| stgcn_attn_2 |                  1,846,529 | 6 NNConv = 6 hops | 2 ST blocks, each with 2 ChebConv = 8 hops |             2 GAT = 2 hops |                          8 hops |                          10 hops |                     9 steps | `Full input horizon (T)` |
 
 Assumptions: Cheb `k_s = 3` = max 2 hops; NNConv/GAT = 1 hop per layer. Temporal RF: `1 + 2 * dynamic_st_blocks * (k_t - 1)`; current value = 9.
 
@@ -286,70 +284,71 @@ L = L_uc_BCE + lambda_lmp * L_lmp_Huber
 
 ## 3. Planned Changes
 
-### 3.1 Edge Set Attention (implemented in ESA)
+### 3.1 Edge Set Attention
 
-使用 [ESA](https://github.com/davidbuterez/edge-set-attention) 替换现有空间处理，保留时间与空间交替聚合。
+以 [ESA 官方实现](https://github.com/davidbuterez/edge-set-attention) 为完整模型主干，使用边 token 输入、ESA 注意力堆叠与读出，再适配 UC 预测任务。原方案中的静态、动态、融合三分支、`ESASpatial`、时空卷积块、全周期卷积压缩与时间展开均从本方案移除。
 
-#### 3.1.1 模型结构设计
+**实现状态**：旧三分支实现及 ESA 注册项已移除，`lib/models/esa/esa.py` 暂为空文件；新方案尚未实现。旧模型的测试结果、参数量及显存数据不能作为本方案的验证结果。
 
-保留母线时序主干，空间信息聚合采用 ESA（边集合注意力），将空间算子统一替换为 `ESASpatial`。显式保留每条线路的表示，结合线路属性学习线路之间的关联。
+#### 3.1.1 整体结构
+
+一个样本对应一个完整调度周期的电网图。建议把完整时域按固定时间顺序编码进输入特征，每条线路形成一个边 token；ESA 在整个线路集合上处理该周期的信息。这样不再对每个时刻分别运行空间注意力。
 
 ```text
-静态：机组特征 → 母线映射 → ESASpatial
-动态：[时间卷积 → ESASpatial（含全局交互）→ 时间卷积] ×2
-      → 全周期压缩
-融合：拼接静态与动态表示 → ESASpatial
-      → 选取机组母线 → 时间展开 → UC logits
+机组静态特征 [B,G,F_node_s]
+-> 按 gen_bus 直接赋值到母线 [B,N,F_node_s]（与 STGCN 一致）
+-> 拼接母线完整时域的负荷/报价特征
+-> 母线输入 [B,N,F_node_s + T*F_node_d]
+
+线路两端的母线特征 + 线路属性（含线路容量约束）
+-> 边 token 嵌入 [B, L, H]
+-> ESA：拓扑 masked attention（M）与全局 self-attention（S）堆叠
+-> 读出（待确认）
+-> UC 输出头
+-> logits [B, G, T]
 ```
 
-在时空模块内部引入远距离全局信息交互。动态 ESA 在每个时刻独立计算，接收时间卷积编码的历史信息，通过边 token 的全局交互汇集同一时刻全系统的负荷与报价信息，再交给后续时间卷积建模全系统供需变化及其跨时段影响。保留时间与空间交替聚合、全周期压缩与输出头；最终预测仍依赖完整输入周期。
+`L` 为适配后的边 token 数，`H` 为隐藏维度。ESA 的 M/S 注意力、前馈层、残差、归一化与读出优先复用官方实现，接入时固定上游版本。具体层序列、深度、头数和 dropout 作为配置暴露；首轮实验配置应记录清楚，不沿用旧 STGCN 的 `k_t`、`k_s` 或三分支配置。
 
-#### 3.1.2 模型接口设计
+#### 3.1.2 UC 输入与输出适配
 
-`ESASpatial`：母线端点特征与线路属性 → 边 token → ESA encoder self-attention → 按目标母线汇总 → 节点残差与归一化。
+继续使用现有数据字段，并保持训练输出为 `logits [B,G,T]`，采用 UC BCE-with-logits 损失。数据接口名 `STGCNInput` 可以暂时复用。
 
-全局信息交互采用 encoder self-attention，以边 token 为 query，输出保留逐边对应关系。局部交互可使用拓扑 mask；时空模块中的全局交互层不使用限制远距离连接的拓扑 mask，但始终保留断线及 padding 的有效性 mask，并隔离不同样本与不同时刻的 token。
+- **时间信息**：建议将 `node_feat_d [B,T,N,F_node_d]` 按固定时序重排为 `[B,N,T*F_node_d]`，作为母线输入的一部分。时间位置由特征槽位区分；首版对应固定调度长度 T。该方案一次使用完整预测周期的已知负荷与报价，不保留时间卷积或逐时因果预测假设。
+- **机组信息**：当前实验保证每条母线至多有一台机组。采用与 STGCN 的 `_gen_to_nodal()` 相同的映射：先创建全零母线张量 `x [B,N,F_node_s]`，再执行 `x[:, gen_bus, :] = node_feat_s`，无机组母线保持零值。映射后与展平的动态特征拼接。以 case2383 为例，静态特征为 8 维，动态特征为 `24*4=96` 维，拼接后的母线输入为 `[B,2383,104]`。
+- **线路信息**：保留线路电抗、容量上限，以及 SCUC 数据中的 contingency-monitor 指示特征和 TOPO 数据中的 maintenance 指示特征。模型使用这些特征学习预测。
+- **拓扑有效性**：当前实验保留全部线路 token，数据与模型接口不再包含 `edge_mask`；TOPO 检修线路采用 soft outage，两个方向的电抗加倍、容量不变，并将 maintenance 指示特征置 1。各算例基础拓扑没有孤立母线，soft outage 不新增孤立母线；固定算例的线路数相同，无需 padding。注意力保持 batch 内样本隔离，M 层仍按线路共享端点使用拓扑 mask。
 
-原版边模式没有现成的母线级输出接口，需新增边到母线读出，首版采用有效入边均值。保留双向边，断线边不得参与注意力或读出，孤立母线通过残差保留自身特征。动态与融合接口需补传线路属性。
+读出建议采用原版图级方案：`ESA → PMA 图表示 → UC MLP → [B,G*T] → [B,G,T]`，具体采用与否仍待确认。输入端使用映射后的母线特征；输出端继续按现有标签的固定机组顺序输出 UC logits，不改为母线级标签。该输出头要求固定 G、T。
 
-#### 3.1.3 ESA 实现审查与待定改动
+#### 3.1.3 拓扑、归一化与配置
 
-**现状**：`lib/models/esa/` 已按 3.1.1–3.1.2 实现，`tests/test_esa.py` 通过。每个 `ESASpatial` 只有一层全局 self-attention，采用 Post-LN，dropout 为 0。
+M 层按线路共享端点构造局部连接，S 层允许同一样本内所有有效边交互；具体 mask 的布尔含义与对角线行为应按接入版本核对。拓扑连接与有效性 mask 分别管理，拓扑相同的样本可复用结构信息。
 
-**1. 拓扑 mask（需要）**
+线路 token 的粒度待确认：保留现有双向边最便于接入；每条物理线路一个 token 可以减少序列长度，但需要明确端点顺序和方向编码。若从现有双向数据提取物理线路，必须校验反向配对的拓扑、属性与停运状态，并保留平行线路。
 
-- 原版 ESA 的节点任务用 NSA：节点作 token，M 层按节点邻接做 mask（如 `M S M S M`），不加 PMA，也不用线路属性；原版边模式只支持图级任务。
-- 原版边模式的 M 层 mask：两条边共享任一端点即相邻（src–src、tgt–tgt、交叉均算）。
-- 方案：沿用边模式的 mask 并**保留对角线**，避免邻边全断时整行被 mask 而输出 NaN；层序列可配置（如 `MS`）。动态分支保留 S 层，以满足全局交互要求。
-- 显存：拓扑在样本间共享，`[E, E]` mask 只构造一次，再与各样本的 `edge_mask` 广播；不要展开为 `[B·T, E, E]`（case2383 在 B=8 时约 6.4 GB）。
+注意力层内部的归一化、残差与 dropout 沿用选定的 ESA 配置。输入特征的归一化另行处理，只使用训练集统计量。若继续使用 `PreNormLayer`，预热仅收集原始输入统计，不必执行 ESA 主干；其统计口径应与最终输入适配一致。
 
-**2. 单向边**
+新配置需保存上游版本、输入编码方式、边表示方式、ESA 层序列、维度与头数、归一化与 dropout、读出类型，以及 G/T 和机组顺序约定。新架构需要重新训练，旧三分支 checkpoint 不作直接兼容承诺。
 
-- case2383 的 5792 条有向边 = 2896 条线路 × 2；后半段是前半段的翻转，属性和 mask 与前半段相同。双向的两份 token 基本冗余，不是必需的。
-- 收益：注意力计算量和 mask 约降为 1/4，token 激活显存约减半。
-- 配套改动：读出改为按两个端点汇总，并区分起点、终点投影（`W_src`、`W_tgt`）；否则只作起点的母线收不到该线路的信息。
-- 只在 ESA 内部取 `edge_index[:, :E/2]`，数据和 V1/stgcn_attn_0 不变。按位置去重，不按 (u,v) 对去重（case2383 有 10 对并行线路）；加断言检查后半段是前半段的翻转。
+#### 3.1.4 大图显存与验证
 
-**3. 显存**：case2383 一次前向加反向的峰值：B=1 为 1.93 GB，B=4 为 7.6 GB；B=8 在 11 GB 的 2080 Ti 上 OOM。改用单向边后需要重新测。
+新方案的注意力序列是每个样本的 L 条边，完整时域已进入特征维度。若物化分数矩阵，其规模为 `[B,A,L,L]`，不再具有旧动态分支的 T 倍空间注意力批次；因此删除旧方案的 `spatial_time_chunk_size`、时段分块及对应等价性验证。
 
-**4. LN 与 dropout**
+实际显存仍取决于边数、层数、dtype、mask 与注意力后端。优先使用官方支持且目标设备可用的高效注意力实现，必要时评估 AMP 与 ESA block 级梯度检查点。局部 mask 本身不代表采用稀疏计算，也不保证降低二次内存；不以旧模型峰值估算新模型一定可运行。
 
-- Post-LN `LN(x + f(x))`：每层输出尺度稳定，但梯度要穿过每层 LN，层数多时不稳定（原版用 Admin 初始化缓解）。
-- Pre-LN `x + f(LN(x))`：恒等残差通路，深层训练更稳，需要一个最终 LN；是原版默认。
-- 建议：堆叠 `MS` 后改用 Pre-LN，并把 dropout 暴露到 `ESAConfig`（训练集只有 800 个样本）。
+实施与验收顺序：
 
-**5. 与 V1 的小差异**
+1. 确定输入编码、读出与边 token 方案，固定官方 ESA 版本并完成 UC 适配。
+2. 小图验证机组到母线的映射（与 STGCN 直接赋值结果一致、无机组母线填零）、输出形状、机组顺序、soft outage 的双向电抗与容量、平行线路以及样本隔离；完成有限损失、反向梯度和一次优化器更新检查。
+3. 检查特征归一化只使用训练集统计；验证新 checkpoint 保存/加载后的预测一致性。
+4. 在 case2383 目标 GPU 上以 `batch_size=1` 起步，分别测量预处理/预热、训练前向、反向、优化器更新及验证阶段的峰值显存与耗时；记录设备、运行版本、dtype 和实际注意力后端。
+5. 跑通训练及验证 epoch，再调整 batch size、ESA 深度与隐藏维度，比较 UC 预测效果与现有基线。
 
-- 多机母线：V1 用赋值，只保留一台机组（CUDA 上保留哪台不确定）；ESA 用求和，但成本、最小启停时间等特征相加没有物理意义。case2383 没有多机母线，两者等价；其他算例需要检查，必要时改为 sum + 机组数，或 sum/mean/max 拼接。
-- PreNorm 位置：V1 在母线级归一化，统计量被约 86% 的无机组零行主导；ESA 在机组级归一化，统计量更干净，但无机组母线的 0 与"平均水平的机组"无法区分，可加"是否有机组"指示特征。
+#### 3.1.5 待确认的设计选择
 
-**待确认问题**
-
-1. M 层方案：采用边模式 mask（共享母线即相邻，保留对角线），层序列可配置，静态、融合、动态默认都用 `MS`，是否同意？还是改用原版 NSA 节点方案（会丢掉线路 token 和线路属性）？
-2. 单向边：在 ESA 内部只取单向边，读出改为按两个端点汇总并区分起点、终点投影，是否同意？
-3. 显存：如果改用单向边后，case2383 在 B=8 下仍然 OOM，选哪种处理方式：给 esa 单独调小 batch、gradient checkpointing，还是 AMP 混合精度？
-4. LN 与 dropout：是否改用 Pre-LN，并把 dropout 暴露到 `ESAConfig`？
-5. 静态特征：是否给母线加"是否有机组"指示特征？多机母线的聚合要不要从求和改为 sum + 机组数，或 sum/mean/max 拼接？
+1. 是否采用完整时域展平输入，并使用原版 ESA + PMA + 固定 `[G*T]` UC 输出头？
+2. 边 token 保留双向，还是每条物理线路一个 token？
 
 ### 3.2 学习线路拥堵任务
 
@@ -362,6 +361,10 @@ TBD
 ### 3.4 Topo & Scuc Together
 
 TBD
+
+### 3.5 Minor Changes
+
+已将 TOPO 模型输入与求解器统一为 soft outage（检修线路双向电抗加倍、容量不变、保留连接），TOPO 线路特征新增双向 maintenance 0/1 指示列，并从数据接口、NNConv/ChebConv/GAT 及 MLP 中移除 `edge_mask`；旧处理数据须从已有原始样本重新转换（无需重新求解），MLP 输入维度缩小，TOPO 的 `f_edge` 由 2 增至 3；`architecture_version` 检查保留，旧 TOPO 模型与旧 MLP 因输入维度变化无法加载，需按新输入重新训练。
 
 ## 4. Architecture Decisions
 
