@@ -59,7 +59,6 @@ class StaticModule(nn.Module):
             edge_index = data.edge_index,
             edge_attr  = self.edge_norm(data.edge_attr),
             node_feat  = self.node_norm(data.node_feat),
-            edge_mask  = data.edge_mask,
         )
 
         x = torch.relu(self.nn_conv1(data))              # [B, N, f_hidden]
@@ -67,7 +66,6 @@ class StaticModule(nn.Module):
             edge_index = data.edge_index,
             edge_attr  = data.edge_attr,
             node_feat  = x,
-            edge_mask  = data.edge_mask,
         )
         x = torch.relu(self.nn_conv2(mid))               # [B, N, f_hidden]
         return self.proj(x)                              # [B, N, f_out]

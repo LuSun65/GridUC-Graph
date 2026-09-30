@@ -19,7 +19,7 @@ class StaticModule2Config:
 
 
 class DegreeNormalizedNNConvLayer(NNConvLayer):
-    """NNConv whose incoming messages are averaged by active node degree."""
+    """NNConv whose incoming messages are averaged by node degree."""
 
     def forward(self, data: StaticGraph) -> torch.Tensor:
         src, dst = data.edge_index[0], data.edge_index[1]
@@ -32,23 +32,9 @@ class DegreeNormalizedNNConvLayer(NNConvLayer):
         messages = torch.einsum(
             'bef, befo -> beo', source_features, weights
         )
-        active_edges = data.edge_mask.unsqueeze(-1).to(messages.dtype)
-        messages = messages * active_edges
         summed_messages = self._scatter_add(messages, dst)
-
-        batch_size = messages.shape[0]
-        degree = torch.zeros(
-            batch_size,
-            self.n_node,
-            device=messages.device,
-            dtype=messages.dtype,
-        )
-        degree.scatter_add_(
-            1,
-            dst.unsqueeze(0).expand(batch_size, edge_count),
-            data.edge_mask.to(messages.dtype),
-        )
-        return summed_messages / degree.clamp_min(1.0).unsqueeze(-1)
+        degree = torch.bincount(dst, minlength=self.n_node).to(messages.dtype)
+        return summed_messages / degree.clamp_min(1.0)[None, :, None]
 
 
 class ResidualNNConvBlock(nn.Module):
@@ -110,6 +96,5 @@ class StaticModule2(nn.Module):
                 edge_index=data.edge_index,
                 edge_attr=edge_attr,
                 node_feat=x,
-                edge_mask=data.edge_mask,
             ))
         return self.proj(x)

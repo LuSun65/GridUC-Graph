@@ -144,19 +144,16 @@ class STGCNAttn1(nn.Module):
             edge_index=data.edge_index,
             edge_attr=data.edge_attr,
             node_feat=node_feat_s,
-            edge_mask=data.edge_mask,
         ))
 
         x_dynamic = self.dynamic_branch(DyncGraph(
             x=data.node_feat_d,
             edge_index=data.edge_index,
-            edge_mask=data.edge_mask,
         ))
 
         return self.fusion(FusionGraph(
             x_static=x_static,
             x_dynamic=x_dynamic,
             edge_index=data.edge_index,
-            edge_mask=data.edge_mask,
             gen_bus=data.gen_bus,
         ))

@@ -31,13 +31,21 @@ def to_stgcn_input(uc: UCData, uc_type: str) -> STGCNInput:
                 contingency[0, line_idx + num_line, 0] = 1.0
         edge_attr = torch.cat([edge_attr, contingency], dim=-1)
 
-    edge_mask = torch.ones(1, 2 * num_line, dtype=torch.float32)
+    if uc_type == "topo":
+        maintenance = torch.zeros(1, 2 * num_line, 1, dtype=torch.float32)
+        edge_attr = torch.cat([edge_attr, maintenance], dim=-1)
+
     if uc.maintenance_line is not None:
         ml = uc.maintenance_line
         ml_list = [int(ml)] if not hasattr(ml, '__iter__') else [int(i) for i in ml]
         for line_idx in ml_list:
-            edge_mask[0, line_idx] = 0.0
-            edge_mask[0, line_idx + num_line] = 0.0
+            # Match build_uc's maintenance PTDF: keep the connection, double
+            # reactance, and retain the original N-0 capacity limits.
+            edge_attr[0, line_idx, 0] *= 2.0
+            edge_attr[0, line_idx + num_line, 0] *= 2.0
+            if uc_type == "topo":
+                edge_attr[0, line_idx, -1] = 1.0
+                edge_attr[0, line_idx + num_line, -1] = 1.0
 
     gen_feat = np.stack([
         uc.gen_pmax, uc.gen_pmin, uc.gen_ramp_up, uc.gen_ramp_down,
@@ -68,7 +76,6 @@ def to_stgcn_input(uc: UCData, uc_type: str) -> STGCNInput:
         edge_index=edge_index,
         edge_attr=edge_attr,
         gen_bus=gen_bus,
-        edge_mask=edge_mask,
         uc_target=uc_target,
         lmp_target=torch.tensor(uc.lmp_target, dtype=torch.float32).unsqueeze(0)
                    if uc.lmp_target is not None else None,
@@ -82,7 +89,6 @@ def concat_stgcn_inputs(inputs: List[STGCNInput]) -> STGCNInput:
         node_feat_s=torch.cat([d.node_feat_s for d in inputs], dim=0),
         node_feat_d=torch.cat([d.node_feat_d for d in inputs], dim=0),
         edge_attr=torch.cat([d.edge_attr for d in inputs], dim=0),
-        edge_mask=torch.cat([d.edge_mask for d in inputs], dim=0),
         edge_index=inputs[0].edge_index,
         gen_bus=inputs[0].gen_bus,
         uc_target=torch.cat([d.uc_target for d in inputs], dim=0)
@@ -195,7 +201,7 @@ def validate_processed_data(data: dict, expected_sample_count: int = None,
         raise ValueError("Processed file must contain train and test entries")
 
     required = ("node_feat_s", "node_feat_d", "edge_index", "edge_attr",
-                "gen_bus", "edge_mask", "uc_target")
+                "gen_bus", "uc_target")
     counts = []
     for split_name in ("train", "test"):
         split = data[split_name]
@@ -208,12 +214,17 @@ def validate_processed_data(data: dict, expected_sample_count: int = None,
             )
         count = split.node_feat_s.shape[0]
         counts.append(count)
-        for field in ("node_feat_d", "edge_attr", "edge_mask", "uc_target"):
+        for field in ("node_feat_d", "edge_attr", "uc_target"):
             value = getattr(split, field)
             if value is not None and value.shape[0] != count:
                 raise ValueError(
                     f"Processed {split_name}.{field} has inconsistent batch size"
                 )
+        if hasattr(split, "edge_mask"):
+            raise ValueError(
+                f"Processed {split_name} uses the retired edge_mask interface, incompatible "
+                "with soft outage; rerun process_data from raw samples before training"
+            )
     if expected_sample_count is not None and sum(counts) != expected_sample_count:
         raise ValueError(
             f"Processed sample count mismatch: expected {expected_sample_count}, "
@@ -232,7 +243,6 @@ class STGCNDataset(Dataset):
         self.node_feat_s = data.node_feat_s
         self.node_feat_d = data.node_feat_d
         self.edge_attr = data.edge_attr
-        self.edge_mask = data.edge_mask
         self.uc_target = data.uc_target
         self.lmp_target = data.lmp_target
         self.edge_index = data.edge_index
@@ -246,7 +256,6 @@ class STGCNDataset(Dataset):
             'node_feat_s': self.node_feat_s[idx],
             'node_feat_d': self.node_feat_d[idx],
             'edge_attr': self.edge_attr[idx],
-            'edge_mask': self.edge_mask[idx],
             'uc_target': self.uc_target[idx] if self.uc_target is not None else None,
             'lmp_target': self.lmp_target[idx] if self.lmp_target is not None else None,
         }
@@ -256,7 +265,6 @@ class STGCNDataset(Dataset):
             node_feat_s=torch.stack([s['node_feat_s'] for s in samples]),
             node_feat_d=torch.stack([s['node_feat_d'] for s in samples]),
             edge_attr=torch.stack([s['edge_attr'] for s in samples]),
-            edge_mask=torch.stack([s['edge_mask'] for s in samples]),
             edge_index=self.edge_index,
             gen_bus=self.gen_bus,
             uc_target=torch.stack([s['uc_target'] for s in samples])

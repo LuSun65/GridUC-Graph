@@ -15,7 +15,6 @@ class STGCNInput:
     edge_index   [2, E]            — shared topology
     edge_attr    [B, E, F_edge]    — per-sample edge features
     gen_bus      [G]               — bus index of each generator
-    edge_mask    [B, E]            — 1=active, 0=broken line (per sample)
     uc_target    [B, G, T]         — ground truth (optional, for training)
     lmp_target   [B, N, T]         — prices in original units (optional)
     """
@@ -24,7 +23,6 @@ class STGCNInput:
     edge_index:  torch.Tensor   # [2, E]
     edge_attr:   torch.Tensor   # [B, E, F_edge]
     gen_bus:     torch.Tensor   # [G]
-    edge_mask:   torch.Tensor   # [B, E]
     uc_target:   torch.Tensor = None  # [B, G, T]
     lmp_target:  torch.Tensor = None  # [B, N, T], original price units
 
@@ -35,7 +33,6 @@ class STGCNInput:
             edge_index  = self.edge_index.to(device),
             edge_attr   = self.edge_attr.to(device),
             gen_bus     = self.gen_bus.to(device),
-            edge_mask   = self.edge_mask.to(device),
             uc_target   = self.uc_target.to(device) if self.uc_target is not None else None,
             lmp_target  = self.lmp_target.to(device) if self.lmp_target is not None else None,
         )
@@ -49,12 +46,10 @@ class StaticGraph:
     edge_index  [2, E]          — shared across all samples
     edge_attr   [B, E, F_edge]  — per sample edge features
     node_feat   [B, N, F_node]  — per sample node features (already bus-indexed)
-    edge_mask   [E]             — 1=active, 0=broken line (shared across all samples)
     """
     edge_index:  torch.Tensor   # [2, E]
     edge_attr:   torch.Tensor   # [B, E, F_edge]
     node_feat:   torch.Tensor   # [B, N, F_node]
-    edge_mask:   torch.Tensor   # [B, E]  1=active, 0=broken line (per sample)
 
     @property
     def f_in(self) -> int:
@@ -72,11 +67,9 @@ class DyncGraph:
 
     x          [B, n_period, N, f_node]  — per sample node features
     edge_index [2, E]                    — shared across all samples
-    edge_mask  [B, E]                    — 1=active, 0=broken line (per sample)
     """
     x:          torch.Tensor   # [B, n_period, N, f_node]
     edge_index: torch.Tensor   # [2, E]
-    edge_mask:  torch.Tensor   # [B, E]
 
     @property
     def f_node(self) -> int:
@@ -91,11 +84,9 @@ class FusionGraph:
     x_static:  [B, N, f_in]  — output of StaticModule
     x_dynamic: [B, N, f_in]  — output of DyncModule
     edge_index [2, E]         — shared across all samples
-    edge_mask  [B, E]         — 1=active, 0=broken line (per sample)
     gen_bus:   [G]            — bus index of each generator
     """
     x_static:   torch.Tensor  # [B, N, f_in]
     x_dynamic:  torch.Tensor  # [B, N, f_in]
     edge_index: torch.Tensor  # [2, E]
-    edge_mask:  torch.Tensor  # [B, E]
     gen_bus:    torch.Tensor  # [G]

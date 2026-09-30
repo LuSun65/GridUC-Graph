@@ -35,10 +35,9 @@ class ResidualChebConvBlock(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_mask: torch.Tensor,
     ) -> torch.Tensor:
         residual = self.skip(x)
-        update = self.graph_conv(x, edge_index, edge_mask)
+        update = self.graph_conv(x, edge_index)
         return self.norm(residual + self.alpha * update)
 
 
@@ -74,17 +73,13 @@ class STConvBlock2(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_mask: torch.Tensor,
     ) -> torch.Tensor:
         x = self.tconv1(x)
 
         batch_size, n_period, n_node, channels = x.shape
         x = x.reshape(batch_size * n_period, n_node, channels)
-        mask = edge_mask.unsqueeze(1).expand(
-            batch_size, n_period, -1
-        ).reshape(batch_size * n_period, -1)
         for block in self.cheb_convs:
-            x = block(x, edge_index, mask)
+            x = block(x, edge_index)
         x = x.reshape(batch_size, n_period, n_node, -1)
 
         return self.ln(self.tconv2(x))

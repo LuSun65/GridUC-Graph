@@ -65,7 +65,7 @@ class AttentionFusionModule(nn.Module):
         B, N, _ = data.x_static.shape
         x = torch.cat((data.x_static, data.x_dynamic), dim=-1)
         x = torch.relu(self.fusion_attention(
-            x, data.edge_index, data.edge_mask
+            x, data.edge_index
         ))
 
         x_gen = x[:, data.gen_bus, :]

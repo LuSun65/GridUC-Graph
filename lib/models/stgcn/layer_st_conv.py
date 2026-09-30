@@ -22,7 +22,7 @@ class STConvConfig:
 
 class STConvBlock(nn.Module):
     """
-    input:  x [B, T, N, f_in],  edge_index [2, E],  edge_mask [E]
+    input:  x [B, T, N, f_in],  edge_index [2, E]
     output:   [B, T, N, f_out]
     """
 
@@ -46,14 +46,12 @@ class STConvBlock(nn.Module):
         self,
         x:          torch.Tensor,   # [B, T, N, f_in]
         edge_index: torch.Tensor,   # [2, E]
-        edge_mask:  torch.Tensor,   # [B, E]  1=active, 0=broken
     ) -> torch.Tensor:              # [B, T, N, f_out]
         x = self.tconv1(x)                                                    # [B, T, N, f_out]
 
         B, T, N, C = x.shape
         x_bt = x.reshape(B * T, N, C)                                        # [B*T, N, C]
-        mask_bt = edge_mask.unsqueeze(1).expand(B, T, -1).reshape(B * T, -1) # [B*T, E]
-        x_bt = torch.relu(self.cheb_conv(x_bt, edge_index, mask_bt))         # [B*T, N, f_hidden]
+        x_bt = torch.relu(self.cheb_conv(x_bt, edge_index))         # [B*T, N, f_hidden]
         x    = x_bt.reshape(B, T, N, -1)                                     # [B, T, N, f_hidden]
 
         x = self.tconv2(x)                                                    # [B, T, N, f_out]

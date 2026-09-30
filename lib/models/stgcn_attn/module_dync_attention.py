@@ -78,8 +78,8 @@ class AttentionDyncModule(nn.Module):
 
     def forward(self, data: DyncGraph) -> torch.Tensor:
         x = self.norm(data.x)
-        x = self.st_block1(x, data.edge_index, data.edge_mask)
-        x = self.st_block2(x, data.edge_index, data.edge_mask)
+        x = self.st_block1(x, data.edge_index)
+        x = self.st_block2(x, data.edge_index)
 
         x = x.permute(0, 3, 1, 2)
         p, q = torch.chunk(self.collapse(x), 2, dim=1)

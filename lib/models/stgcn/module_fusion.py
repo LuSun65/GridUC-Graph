@@ -63,7 +63,7 @@ class FusionModule(nn.Module):
 
         # ChebConv expects [B*1, N, F] — run per sample
         x_bt = x.reshape(B, N, -1)
-        x_bt = torch.relu(self.fusion_conv(x_bt, data.edge_index, data.edge_mask))  # [B, N, f_hidden]
+        x_bt = torch.relu(self.fusion_conv(x_bt, data.edge_index))  # [B, N, f_hidden]
         return x_bt
 
     def forward(self, data: FusionGraph) -> torch.Tensor:   # [B, G, n_period]

@@ -22,7 +22,6 @@ class NNConvLayer(nn.Module):
 
     edge_attr [B, E, f_edge]  ->  edge_mlp  ->  W [B, E, f_in, f_hidden]
     x_src     [B, E, f_in]  @   W          ->  msg [B, E, f_hidden]
-    msg       * edge_mask      ->  masked msg [B, E, f_hidden]  (broken edges zeroed)
     msg                        ->  scatter_add(dst)  ->  out [B, n_node, f_hidden]
     """
 
@@ -61,5 +60,4 @@ class NNConvLayer(nn.Module):
         W     = self.edge_mlp(data.edge_attr).view(-1, E, self.f_in, self.f_hidden)   # [B, E, f_in, f_hidden]
         x_src = self._gather(x, src)                                                    # [B, E, f_in]
         msg   = torch.einsum('bef, befo -> beo', x_src, W)                             # [B, E, f_hidden]
-        msg   = msg * data.edge_mask.unsqueeze(-1).float()                              # [B, E, f_hidden]  broken edges → 0
         return self._scatter_add(msg, dst)                                              # [B, n_node, f_hidden]

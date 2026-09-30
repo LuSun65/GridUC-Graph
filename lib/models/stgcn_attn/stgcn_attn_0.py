@@ -131,14 +131,12 @@ class STGCNAttn0(nn.Module):
             edge_index = data.edge_index,
             edge_attr  = data.edge_attr,
             node_feat  = node_feat_s,
-            edge_mask  = data.edge_mask,
         ))  # [B, N, f_hidden]
 
         # Dynamic branch: [B, T, N, f_node_d]
         x_dynamic = self.dynamic_branch(DyncGraph(
             x          = data.node_feat_d,
             edge_index = data.edge_index,
-            edge_mask  = data.edge_mask,
         ))  # [B, N, f_hidden]
 
         # Fusion -> per-generator per-timestep prediction
@@ -146,7 +144,6 @@ class STGCNAttn0(nn.Module):
             x_static   = x_static,
             x_dynamic  = x_dynamic,
             edge_index = data.edge_index,
-            edge_mask  = data.edge_mask,
             gen_bus    = data.gen_bus,
         ))  # [B, G, n_period]
         return logits

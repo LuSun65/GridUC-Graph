@@ -42,10 +42,9 @@ class ResidualGraphAttentionBlock(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_mask: torch.Tensor,
     ) -> torch.Tensor:
         residual = self.skip(x)
-        update = self.graph_conv(x, edge_index, edge_mask)
+        update = self.graph_conv(x, edge_index)
         return self.norm(residual + self.alpha * update)
 
 
@@ -86,7 +85,7 @@ class FusionModule2(nn.Module):
         batch_size = data.x_static.shape[0]
         x = torch.cat((data.x_static, data.x_dynamic), dim=-1)
         for block in self.fusion_attentions:
-            x = block(x, data.edge_index, data.edge_mask)
+            x = block(x, data.edge_index)
 
         x = x[:, data.gen_bus, :]
         x = self.map_layer(x)

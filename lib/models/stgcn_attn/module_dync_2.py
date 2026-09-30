@@ -58,7 +58,7 @@ class DyncModule2(nn.Module):
     def forward(self, data: DyncGraph) -> torch.Tensor:
         x = self.norm(data.x)
         for st_block in self.st_blocks:
-            x = st_block(x, data.edge_index, data.edge_mask)
+            x = st_block(x, data.edge_index)
 
         x = x.permute(0, 3, 1, 2)
         p, q = torch.chunk(self.collapse(x), 2, dim=1)

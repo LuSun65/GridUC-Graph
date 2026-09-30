@@ -29,7 +29,7 @@ class AttentionSTConvBlock(nn.Module):
     applied independently at every time step after folding the batch and time
     dimensions together.
 
-    input:  x [B, T, N, f_in], edge_index [2, E], edge_mask [B, E]
+    input:  x [B, T, N, f_in], edge_index [2, E]
     output: [B, T, N, f_out]
     """
 
@@ -59,16 +59,13 @@ class AttentionSTConvBlock(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_mask: torch.Tensor,
     ) -> torch.Tensor:
         x = self.tconv1(x)
 
         B, T, N, C = x.shape
         x_bt = x.reshape(B * T, N, C)
-        mask_bt = edge_mask.unsqueeze(1).expand(B, T, -1)
-        mask_bt = mask_bt.reshape(B * T, -1)
         x_bt = torch.relu(self.graph_attention(
-            x_bt, edge_index, mask_bt
+            x_bt, edge_index
         ))
         x = x_bt.reshape(B, T, N, -1)
 

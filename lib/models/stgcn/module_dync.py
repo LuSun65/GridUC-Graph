@@ -21,7 +21,7 @@ class DyncModuleConfig:
 
 class DyncModule(nn.Module):
     """
-    input:  DyncGraph  —  x [B, n_period, N, f_node],  edge_index [2, E],  edge_mask [E]
+    input:  DyncGraph  —  x [B, n_period, N, f_node],  edge_index [2, E]
     output: [B, N, f_out]
     """
 
@@ -64,8 +64,8 @@ class DyncModule(nn.Module):
     def forward(self, data: DyncGraph) -> torch.Tensor:
         x = self.norm(data.x)                         # [B, n_period, N, f_node]
 
-        x = self.st_block1(x, data.edge_index, data.edge_mask)   # [B, n_period, N, f_hidden]
-        x = self.st_block2(x, data.edge_index, data.edge_mask)   # [B, n_period, N, f_hidden]
+        x = self.st_block1(x, data.edge_index)   # [B, n_period, N, f_hidden]
+        x = self.st_block2(x, data.edge_index)   # [B, n_period, N, f_hidden]
 
         x = x.permute(0, 3, 1, 2)                         # [B, f_hidden, n_period, N]
         p, q = torch.chunk(self.collapse(x), 2, dim=1)  # [B, f_hidden, 1, N] each

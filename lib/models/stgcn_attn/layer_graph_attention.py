@@ -16,16 +16,10 @@ class GraphAttentionConfig:
 
 
 class GraphAttentionLayer(nn.Module):
-    """Masked multi-head graph attention over a batch of shared graphs.
+    """Multi-head attention over the shared graph, with one self-loop per node.
 
-    ``edge_index`` is shared by the batch while ``edge_mask`` can remove a
-    different set of transmission lines for every sample. Attention is
-    normalized over incoming edges for each destination node. One self-loop is
-    added for every node and is deliberately independent of ``edge_mask`` so an
-    isolated bus still has a valid attention neighborhood.
-
-    input:  x [B, n_node, f_in], edge_index [2, E], edge_mask [B, E]
-    output: [B, n_node, f_out]
+    Input: x [B, N, F], edge_index [2, E]. Output: [B, N, f_out].
+    Attention is normalized over each destination's incoming edges.
     """
 
     def __init__(self, config: GraphAttentionConfig):
@@ -65,41 +59,22 @@ class GraphAttentionLayer(nn.Module):
         nn.init.zeros_(self.bias)
 
     def _edges_with_self_loops(
-        self,
-        edge_index: torch.Tensor,
-        edge_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Return source, destination, and mask with exactly one loop per node."""
-        src, dst = edge_index[0], edge_index[1]
-
-        # Replace any supplied loops rather than duplicating them. Graph
-        # self-information is structural and must not disappear with a line mask.
+        self, edge_index: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return source and destination with exactly one loop per node."""
+        src, dst = edge_index
         non_self = src != dst
-        src = src[non_self]
-        dst = dst[non_self]
-        edge_mask = edge_mask[:, non_self]
-
         loops = torch.arange(self.n_node, device=edge_index.device)
-        src = torch.cat((src, loops))
-        dst = torch.cat((dst, loops))
-        loop_mask = torch.ones(
-            edge_mask.shape[0],
-            self.n_node,
-            device=edge_mask.device,
-            dtype=edge_mask.dtype,
-        )
-        return src, dst, torch.cat((edge_mask, loop_mask), dim=1)
+        return torch.cat((src[non_self], loops)), torch.cat((dst[non_self], loops))
 
     def _incoming_softmax(
         self,
         logits: torch.Tensor,
         dst: torch.Tensor,
-        active: torch.Tensor,
     ) -> torch.Tensor:
-        """Softmax over incoming active edges for each batch, node, and head."""
+        """Softmax over incoming edges for each batch, node, and head."""
         B, E, H = logits.shape
         index = dst.view(1, E, 1).expand(B, E, H)
-        masked_logits = logits.masked_fill(~active.unsqueeze(-1), float("-inf"))
 
         max_per_node = torch.full(
             (B, self.n_node, H),
@@ -108,10 +83,10 @@ class GraphAttentionLayer(nn.Module):
             dtype=logits.dtype,
         )
         max_per_node.scatter_reduce_(
-            1, index, masked_logits, reduce="amax", include_self=True
+            1, index, logits, reduce="amax", include_self=True
         )
-        stabilized = masked_logits - max_per_node.gather(1, index)
-        exp_logits = torch.exp(stabilized).masked_fill(~active.unsqueeze(-1), 0.0)
+        stabilized = logits - max_per_node.gather(1, index)
+        exp_logits = torch.exp(stabilized)
 
         denominator = torch.zeros(
             B, self.n_node, H, device=logits.device, dtype=logits.dtype
@@ -125,23 +100,13 @@ class GraphAttentionLayer(nn.Module):
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_mask: torch.Tensor,
     ) -> torch.Tensor:
         B, N, _ = x.shape
         if N != self.n_node:
             raise ValueError(f"expected {self.n_node} nodes, got {N}")
         if edge_index.ndim != 2 or edge_index.shape[0] != 2:
             raise ValueError("edge_index must have shape [2, E]")
-        if edge_mask.shape != (B, edge_index.shape[1]):
-            raise ValueError(
-                "edge_mask must have shape [B, E]; "
-                f"got {tuple(edge_mask.shape)}"
-            )
-
-        src, dst, edge_mask = self._edges_with_self_loops(
-            edge_index, edge_mask
-        )
-        active = edge_mask.bool()
+        src, dst = self._edges_with_self_loops(edge_index)
 
         node_value = self.proj(x).view(B, N, self.n_heads, self.head_dim)
         src_value = node_value[:, src, :, :]
@@ -151,7 +116,7 @@ class GraphAttentionLayer(nn.Module):
         logits = logits + (dst_value * self.attn_dst).sum(dim=-1)
         logits = F.leaky_relu(logits, negative_slope=self.negative_slope)
 
-        alpha = self._incoming_softmax(logits, dst, active)
+        alpha = self._incoming_softmax(logits, dst)
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         messages = src_value * alpha.unsqueeze(-1)
 

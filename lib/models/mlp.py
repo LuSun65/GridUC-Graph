@@ -38,7 +38,6 @@ class MLP(nn.Module):
             config.n_gen * config.f_node_s          # node_feat_s [G, F_node_s]
             + config.n_period * config.n_node * config.f_node_d  # node_feat_d [T, N, F_node_d]
             + config.n_edge * config.f_edge          # edge_attr [E, F_edge]
-            + config.n_edge                           # edge_mask [E]
         )
         out_dim = config.n_gen * config.n_period
 
@@ -74,7 +73,6 @@ class MLP(nn.Module):
             data.node_feat_s.reshape(B, -1),   # [B, G*F_node_s]
             data.node_feat_d.reshape(B, -1),   # [B, T*N*F_node_d]
             data.edge_attr.reshape(B, -1),     # [B, E*F_edge]
-            data.edge_mask.reshape(B, -1),     # [B, E]
         ]
         x = torch.cat(parts, dim=-1)          # [B, in_dim]
         logits = self.net(x)                   # [B, G*T]

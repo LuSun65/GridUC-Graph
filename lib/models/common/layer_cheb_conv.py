@@ -15,7 +15,7 @@ class ChebConvLayer(nn.Module):
     """
     Chebyshev spectral graph convolution.
 
-    input:  x [B, n_node, f_in],  edge_index [2, E],  edge_mask [B, E] (1=active, 0=broken)
+    input:  x [B, n_node, f_in],  edge_index [2, E]
     output: [B, n_node, f_out]
     """
 
@@ -28,24 +28,20 @@ class ChebConvLayer(nn.Module):
         )
         self.bias   = nn.Parameter(torch.zeros(config.f_out))
 
-    def _edge_weights(self, edge_index: torch.Tensor, edge_mask: torch.Tensor) -> torch.Tensor:
-        """Compute L_hat edge weights: -1 / sqrt(deg_src * deg_dst), masked by edge_mask.
-        edge_mask [B, E] -> returns [B, E]
-        """
-        src, dst = edge_index[0], edge_index[1]
-        B, E     = edge_mask.shape
-        deg      = torch.zeros(B, self.n_node, device=edge_index.device, dtype=torch.float)
-        deg.scatter_add_(1, dst.unsqueeze(0).expand(B, E), edge_mask.float())
-        deg_inv  = deg.pow(-0.5)
-        deg_inv[deg_inv == float('inf')] = 0.0
-        return -deg_inv[:, src] * deg_inv[:, dst] * edge_mask.float()   # [B, E]
+    def _edge_weights(self, edge_index: torch.Tensor) -> torch.Tensor:
+        """Shared normalized adjacency weights for the complete topology."""
+        src, dst = edge_index
+        degree = torch.bincount(dst, minlength=self.n_node).float()
+        inv_degree = degree.pow(-0.5)
+        inv_degree.masked_fill_(torch.isinf(inv_degree), 0.0)
+        return -inv_degree[src] * inv_degree[dst]  # [E]
 
     def _graph_mul(
         self,
         x:           torch.Tensor,   # [B, n_node, F]
         src:         torch.Tensor,   # [E]
         dst:         torch.Tensor,   # [E]
-        edge_weight: torch.Tensor,   # [B, E]  already zeroed for broken edges
+        edge_weight: torch.Tensor,   # [E], shared across samples
     ) -> torch.Tensor:               # [B, n_node, F]
         B, N, F = x.shape
         msg = x[:, src, :] * edge_weight.unsqueeze(-1)   # [B, E, F]
@@ -58,10 +54,9 @@ class ChebConvLayer(nn.Module):
         self,
         x:          torch.Tensor,   # [B, n_node, f_in]
         edge_index: torch.Tensor,   # [2, E]
-        edge_mask:  torch.Tensor,   # [B, E]  1=active, 0=broken
     ) -> torch.Tensor:              # [B, n_node, f_out]
         src, dst    = edge_index[0], edge_index[1]
-        edge_weight = self._edge_weights(edge_index, edge_mask)   # [B, E]
+        edge_weight = self._edge_weights(edge_index)   # [E]
 
         z_prev, z_cur = x, self._graph_mul(x, src, dst, edge_weight)
         out = self.lins[0](z_prev)
