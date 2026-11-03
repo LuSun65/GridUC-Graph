@@ -13,6 +13,7 @@ from lib.ptdf_solver import compute_ptdf, compute_post_ptdf
 
 PRICING_FEASIBILITY_TOL = 1e-6
 PRICING_OPTIMALITY_TOL = 1e-6
+BINDING_TOL_MW = 1e-6
 class PricingSolveError(RuntimeError):
     """Raised when a reliable optimal pricing solution cannot be produced."""
 
@@ -23,9 +24,14 @@ class PricingResult:
 
     p_target: np.ndarray
     lmp_target: np.ndarray
-    obj: float
-    solve_time: float
-    metadata: dict
+    pricing_obj: float
+    pricing_solve_time: float
+    pricing_metadata: dict
+    lmp_energy_target: np.ndarray
+    lmp_congestion_target: np.ndarray
+    shadow_price_target: dict
+    line_flow_target: np.ndarray
+    line_binding_target: np.ndarray
 
 
 def _validate_uc_solution(data: UCData, uc_sol: np.ndarray, uc_type: str) -> np.ndarray:
@@ -221,6 +227,14 @@ def _scenario_ptdf(data, outage):
     return compute_post_ptdf(data, outage_line=outage)[0]
 
 
+def line_binding(flow, limits, tolerance=BINDING_TOL_MW):
+    """Classify both sides only after rejecting infeasible network flows."""
+    slack = np.stack((limits[:, None] - flow, limits[:, None] + flow), axis=-1)
+    if not np.isfinite(slack).all() or np.any(slack < -PRICING_FEASIBILITY_TOL):
+        raise PricingSolveError("Infeasible or non-finite network flow")
+    return np.abs(slack) <= tolerance
+
+
 def solve_pricing(data: UCData, uc_sol: np.ndarray, uc_type: str) -> PricingResult:
     """Solve a direct continuous LP, separating every network scenario each round.
 
@@ -287,24 +301,68 @@ def solve_pricing(data: UCData, uc_sol: np.ndarray, uc_type: str) -> PricingResu
                     name=f"network_{scenario}_{line}_{period}_{int(upper)}",
                 )
 
-        lmp = np.broadcast_to(balance.Pi, (data.num_bus, data.num_period)).copy()
-        # Reconstruct full bus sensitivities one scenario at a time, only for
-        # scenarios with nonzero duals. No stacked contingency PTDF is retained.
-        for scenario, (outage, _) in enumerate(scenarios):
-            active = [(line, period, constraint.Pi)
-                      for (s, line, period, _), constraint in added.items()
-                      if s == scenario and constraint.Pi != 0]
+        energy = np.asarray(balance.Pi, dtype=np.float64).copy()
+        congestion = np.zeros((data.num_bus, data.num_period), dtype=np.float64)
+        flow = np.empty((len(scenarios), data.num_line, data.num_period), dtype=np.float64)
+        binding = np.empty(flow.shape + (2,), dtype=bool)
+        indices, shadows = [], []
+        for scenario, (outage, limits) in enumerate(scenarios):
+            coeff, rhs, _ = networks[scenario]
+            flow[scenario] = coeff @ values - rhs
+            binding[scenario] = line_binding(flow[scenario], limits)
+            active = []
+            for (s, line, period, upper), constraint in added.items():
+                if s != scenario:
+                    continue
+                dual = float(constraint.Pi)
+                shadow = -dual if upper else dual
+                if not np.isfinite(shadow) or shadow < -PRICING_OPTIMALITY_TOL:
+                    raise PricingSolveError("Invalid network dual sign or value")
+                # Keep tolerated numerical sign noise; never abs/threshold duals.
+                if dual != 0:
+                    indices.append((scenario, line, period, 0 if upper else 1))
+                    shadows.append(shadow)
+                    active.append((line, period, dual))
             if active:
                 matrix = _scenario_ptdf(data, outage)
                 for line, period, dual in active:
-                    lmp[:, period] += matrix[line] * dual
+                    congestion[:, period] += matrix[line] * dual
+        lmp = energy[None, :] + congestion
         if not np.isfinite(lmp).all():
             raise PricingSolveError("Non-finite pricing LMP")
+        dp = np.array([model.getVarByName(f"dp[{g},{k},{t}]").X
+                       for g in range(data.num_gen)
+                       for k in range(data.bid_price.shape[1])
+                       for t in range(data.num_period)]).reshape(data.bid_price.shape)
+        cost = float((data.bid_no_load[:, None] * commitment).sum()
+                     + (data.bid_price * dp).sum()
+                     + (data.gen_startup_cost[:, None] * startup).sum())
+        if not np.isclose(cost, model.ObjVal, rtol=1e-8, atol=1e-5):
+            raise PricingSolveError("Objective does not match production and startup costs")
         return PricingResult(
-            p_target=values, lmp_target=lmp, obj=float(model.ObjVal),
-            solve_time=float(runtime),
-            metadata={"uc_type": uc_type,
+            p_target=values.copy(), lmp_target=lmp, pricing_obj=float(model.ObjVal),
+            pricing_solve_time=float(runtime), lmp_energy_target=energy,
+            lmp_congestion_target=congestion, line_flow_target=flow,
+            line_binding_target=binding,
+            shadow_price_target={"shape": flow.shape + (2,),
+                                 "indices": np.asarray(indices, dtype=np.int64).reshape(-1, 4),
+                                 "values": np.asarray(shadows, dtype=np.float64)},
+            pricing_metadata={"uc_type": uc_type,
                       "constraint_generation_rounds": rounds,
                       "network_constraints_added": len(added),
-                      "max_network_violation": max_violation},
+                      "max_network_violation": max_violation,
+                      "lp_status": int(model.Status),
+                      "solver_version": gp.gurobi.version(),
+                      "solver_parameters": {"Threads": model.Params.Threads, "Method": model.Params.Method,
+                                            "FeasibilityTol": PRICING_FEASIBILITY_TOL,
+                                            "OptimalityTol": PRICING_OPTIMALITY_TOL},
+                      "period_hours": 1.0, "ref_bus": 0,
+                      "binding_tol_mw": BINDING_TOL_MW,
+                      "index_convention": "zero-based sample bus/generator/physical-line order",
+                      "flow_direction": "line_from_to_line_to",
+                      "bound_order": ("upper", "lower"),
+                      "scenarios": [{"outage_line": None if outage is None else int(outage),
+                                     "capacity_factor": 1.0 if s == 0 else 1.05,
+                                     "outage_capacity_factor": 1.0 if s == 0 else 0.5}
+                                    for s, (outage, _) in enumerate(scenarios)]},
         )

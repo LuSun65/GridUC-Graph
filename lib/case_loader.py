@@ -78,6 +78,11 @@ class UCData:
     pricing_obj: Optional[float] = None
     pricing_solve_time: Optional[float] = None
     pricing_metadata: Optional[dict] = None
+    lmp_energy_target: Optional[np.ndarray] = None  # [T]
+    lmp_congestion_target: Optional[np.ndarray] = None  # [N,T]
+    shadow_price_target: Optional[dict] = None  # COO, logical [S,L,T,2]
+    line_flow_target: Optional[np.ndarray] = None  # [S,L,T], MW
+    line_binding_target: Optional[np.ndarray] = None  # [S,L,T,2], bool
 
 
 def load_case(case_name: str, data_dir: str = "data/case") -> UCData:

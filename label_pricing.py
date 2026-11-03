@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from lib import lmp_sover
-from lib.label_pricing import label_sample
+from lib.label_pricing import label_sample, has_pricing_labels, infer_uc_type
 from lib.toolkit import load_pkl
 
 
@@ -18,11 +18,16 @@ def _label_one(args):
     path, uc_type, overwrite = args
     started = time.monotonic()
     try:
+        data = load_pkl(path)
+        reason = ("forced overwrite" if overwrite else "complete labels; skipped" if has_pricing_labels(data)
+                  else "missing labels; rebuilding LP" if getattr(data, "lmp_target", None) is not None
+                  else "first generation")
+        del data
         status = label_sample(path, uc_type, overwrite=overwrite)
     except Exception as error:
         reason = f"{type(error).__name__}: {error}"
-        return path, None, time.monotonic() - started, reason
-    return path, status, time.monotonic() - started, None
+        return path, None, time.monotonic() - started, reason, None
+    return path, status, time.monotonic() - started, None, reason
 
 # dir example: /home/npg0/Sunlu/GridUC-Graph/data/case5/samples/tcuc
 # command example: python label_pricing.py --sample-path /home/npg0/Sunlu/GridUC-Graph-v2/samples/fail.pkl --overwrite
@@ -32,7 +37,7 @@ def main():
     source.add_argument("--sample-dir", type=Path)
     source.add_argument("--sample-path", type=Path, help="Single .pkl file; infer case and UC type from its contents")
     parser.add_argument("--sample-id", type=int, help="Process only this sample ID; defaults to all samples")
-    parser.add_argument("--overwrite", action="store_true", help="Regenerate valid labels too")
+    parser.add_argument("--overwrite", action="store_true", help="Rebuild LP and replace all labels even when complete")
     args = parser.parse_args()
     if args.sample_path is not None:
         if args.sample_id is not None:
@@ -40,12 +45,7 @@ def main():
         args.sample_path = args.sample_path.resolve()
         data = load_pkl(args.sample_path)
         case_name = data.case_name
-        if data.cc_monitor:
-            uc_type = "scuc"
-        elif data.maintenance_line is not None:
-            uc_type = "topo"
-        else:
-            uc_type = "tcuc"
+        uc_type = infer_uc_type(data)
         samples = [args.sample_path]
         args.sample_dir = args.sample_path.parent
     else:
@@ -99,7 +99,7 @@ def main():
                     workers, os.cpu_count() or 1)
         tasks = ((path, uc_type, args.overwrite) for path in samples)
         with multiprocessing.get_context("spawn").Pool(workers) as pool:
-            for index, (path, status, elapsed, error) in enumerate(
+            for index, (path, status, elapsed, error, reason) in enumerate(
                 pool.imap_unordered(_label_one, tasks), 1
             ):
                 logger.info("[%d/%d] FINISHED sample %s",
@@ -112,8 +112,8 @@ def main():
                 else:
                     saved += status == "saved"
                     skipped += status == "skipped"
-                    logger.info("%s sample %s (%.3fs)", status.upper(), path.stem,
-                                elapsed)
+                    logger.info("%s sample %s (%.3fs): %s", status.upper(), path.stem,
+                                elapsed, reason)
         logger.info("FINISHED total=%d saved=%d skipped=%d failed=%d elapsed=%.3fs",
                     len(samples), saved, skipped, len(failed), time.monotonic() - started)
         logger.info("Failed sample IDs: %s", ", ".join(path.stem for path in failed) or "none")
